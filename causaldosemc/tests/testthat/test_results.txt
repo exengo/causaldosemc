@@ -1,0 +1,32 @@
+sensitivity: ............................................................................................12....................................................34
+
+══ Failed ══════════════════════════════════════════════════════════════════════
+── 1. Failure ('test-sensitivity.R:1053:3'): formal sensitivity bounds support u
+Expected `unit_row$effective_multiplier` to equal `unit_multiplier`.
+Differences:
+  `actual`: 1.04
+`expected`: 0.58
+
+
+── 2. Failure ('test-sensitivity.R:1054:3'): formal sensitivity bounds support u
+Expected `unit_row$radius` to equal `0.5 * unit_multiplier`.
+Differences:
+  `actual`: 0.52
+`expected`: 0.29
+
+
+── 3. Failure ('test-sensitivity.R:1918:3'): formal sensitivity bounds support o
+Expected `energy_row$effective_multiplier` to equal `unit_multiplier`.
+Differences:
+  `actual`: 161.8
+`expected`:   0.1
+
+
+── 4. Failure ('test-sensitivity.R:1919:3'): formal sensitivity bounds support o
+Expected `energy_row$radius` to equal `0.25 * unit_multiplier`.
+Differences:
+  `actual`: 40.4
+`expected`:  0.0
+
+
+══ DONE ════════════════════════════════════════════════════════════════════════

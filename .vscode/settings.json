@@ -1,0 +1,7 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "Rscript": true,
+        "R": true,
+        "get_terminal_output": true
+    }
+}
