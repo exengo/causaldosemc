@@ -1,0 +1,158 @@
+---
+title: "Getting Started with causaldosemc"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with causaldosemc}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(causaldosemc)
+options(width = 100)
+```
+
+This vignette covers the core package entry points for users who want to move
+from a simulated panel to a fitted matrix-completion model quickly.
+
+## Simulate a reversible continuous-treatment panel
+
+```{r}
+panel <- simulate_cdmc_data(
+  n_units = 16,
+  n_times = 10,
+  beta = 0.8,
+  lag_beta = 0.25,
+  noise_sd = 0.05,
+  switch_on_prob = 0.15,
+  switch_off_prob = 0.45,
+  seed = 101
+)
+
+head(panel)
+```
+
+## Fit the default staged estimator
+
+For empirical work, prefer blocked cross-validation when the panel has enough
+eligible zero-dose support to tune safely.
+
+```{r}
+fit_cv <- cdmc_fit(
+  data = panel,
+  outcome = "y",
+  dose = "dose",
+  unit = "unit",
+  time = "time",
+  covariates = "x1",
+  lambda = NULL,
+  lambda_selection = "cv",
+  cv_rounds = 3L,
+  cv_block_size = 2L,
+  washout = 1,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 101
+)
+
+fit_cv
+summary(fit_cv)
+head(predict(fit_cv, type = "y0"))
+head(predict(fit_cv, type = "tau_model"))
+```
+
+## Fit an unbalanced panel
+
+Missing unit-time combinations are padded internally onto the full unit-time
+grid and tracked through the `.cdmc_observed` marker.
+
+```{r}
+drop_units <- sort(unique(panel$unit))[c(3, 11)]
+drop_times <- sort(unique(panel$time))[c(4, 7)]
+
+panel_unbalanced <- subset(
+  panel,
+  !(unit %in% drop_units & time %in% drop_times)
+)
+
+fit_unbalanced <- cdmc_fit(
+  data = panel_unbalanced,
+  outcome = "y",
+  dose = "dose",
+  unit = "unit",
+  time = "time",
+  covariates = "x1",
+  lambda = 0.18,
+  washout = 1,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 101
+)
+
+table(fit_unbalanced$data$.cdmc_observed)
+fit_unbalanced
+```
+
+## Reuse balancing weights in the main estimator
+
+External weights are useful when the same weighting rule should be reused across
+main fitting, DR fitting, and downstream dose-response work.
+
+```{r}
+w_entropy <- cdmc_entropy_balance_weights(
+  panel,
+  dose = "dose",
+  covariates = "x1",
+  time = "time",
+  time_effects = TRUE
+)
+
+head(w_entropy$weights)
+
+fit_weighted <- cdmc_fit(
+  data = panel,
+  outcome = "y",
+  dose = "dose",
+  unit = "unit",
+  time = "time",
+  covariates = "x1",
+  weights = w_entropy,
+  lambda = 0.18,
+  washout = 1,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 101
+)
+
+fit_weighted
+```
+
+## Fit the joint objective
+
+Use the joint objective when a global parametric treatment basis is acceptable
+and you want the low-rank baseline and treatment layer solved together.
+
+```{r}
+fit_joint <- cdmc_fit(
+  data = panel,
+  outcome = "y",
+  dose = "dose",
+  unit = "unit",
+  time = "time",
+  covariates = "x1",
+  objective = "joint",
+  effect_model = "linear",
+  lambda = 0.18,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 101
+)
+
+fit_joint
+head(predict(fit_joint, type = "tau_model"))
+```
+
+The usual starting point for applied work is still the staged estimator with
+blocked cross-validation. The weighted and joint paths are best treated as
+deliberate modeling choices rather than automatic upgrades.

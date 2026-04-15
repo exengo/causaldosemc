@@ -128,6 +128,7 @@ cdmc_prepare_scia_sample <- function(
     sample = sample,
     restricted_formula = restricted_formula,
     augmented_formula = augmented_formula,
+    restricted_terms = restricted_terms,
     dose_history_terms = dose_history_terms,
     outcome_history_terms = outcome_history_terms,
     current_covariate_terms = current_covariate_terms,
@@ -140,6 +141,132 @@ cdmc_prepare_scia_sample <- function(
     include_unit_effects = include_unit_effects,
     include_time_effects = include_time_effects
   )
+}
+
+cdmc_format_scia_block_name <- function(lag_indices, outcome_history_terms) {
+  if (length(lag_indices) == 1L) {
+    return(outcome_history_terms[[lag_indices]])
+  }
+
+  paste0("lags_", paste(lag_indices, collapse = "_"))
+}
+
+cdmc_resolve_scia_restriction_blocks <- function(lags, outcome_history_terms, restriction_blocks = NULL) {
+  if (is.null(restriction_blocks)) {
+    resolved <- as.list(seq_len(lags))
+    names(resolved) <- vapply(seq_len(lags), function(index) {
+      cdmc_format_scia_block_name(index, outcome_history_terms)
+    }, character(1))
+    return(resolved)
+  }
+
+  if (is.numeric(restriction_blocks)) {
+    restriction_blocks <- list(restriction_blocks)
+  }
+
+  if (!is.list(restriction_blocks) || length(restriction_blocks) < 1L) {
+    stop("restriction_blocks must be NULL, a numeric vector, or a nonempty list of lag indices.", call. = FALSE)
+  }
+
+  resolved <- lapply(restriction_blocks, function(block) {
+    if (!is.numeric(block) || length(block) < 1L || any(!is.finite(block))) {
+      stop("Each SCIA restriction block must contain one or more finite lag indices.", call. = FALSE)
+    }
+
+    block <- sort(unique(as.integer(block)))
+    if (any(block < 1L) || any(block > lags)) {
+      stop(
+        sprintf("SCIA restriction lag indices must lie between 1 and %d.", lags),
+        call. = FALSE
+      )
+    }
+
+    block
+  })
+
+  block_names <- names(restriction_blocks)
+  if (is.null(block_names)) {
+    block_names <- rep("", length(resolved))
+  }
+  block_names[!nzchar(block_names)] <- vapply(resolved[!nzchar(block_names)], function(block) {
+    cdmc_format_scia_block_name(block, outcome_history_terms)
+  }, character(1))
+
+  if (anyDuplicated(block_names)) {
+    stop("SCIA restriction block names must be unique.", call. = FALSE)
+  }
+
+  names(resolved) <- block_names
+  resolved
+}
+
+cdmc_scia_conditioning_table <- function(prepared) {
+  rows <- list(
+    dose_history = prepared$dose_history_terms,
+    current_covariates = prepared$current_covariate_terms,
+    lagged_covariates = prepared$lagged_covariate_terms,
+    unit_effects = if (isTRUE(prepared$include_unit_effects)) "factor(.cdmc_unit_index)" else character(0),
+    time_effects = if (isTRUE(prepared$include_time_effects)) "factor(.cdmc_time_index)" else character(0)
+  )
+
+  rows <- rows[vapply(rows, length, integer(1)) > 0L]
+  if (length(rows) < 1L) {
+    return(data.frame(
+      block = character(0),
+      n_terms = integer(0),
+      terms = character(0),
+      stringsAsFactors = FALSE
+    ))
+  }
+
+  data.frame(
+    block = names(rows),
+    n_terms = vapply(rows, length, integer(1)),
+    terms = vapply(rows, function(row) paste(row, collapse = ", "), character(1)),
+    stringsAsFactors = FALSE
+  )
+}
+
+cdmc_scia_compare_restrictions <- function(prepared, restricted_fit, restriction_blocks, alpha = 0.05, p_adjust_method = c("holm", "none")) {
+  p_adjust_method <- match.arg(p_adjust_method)
+
+  rows <- lapply(names(restriction_blocks), function(block_name) {
+    block_lags <- restriction_blocks[[block_name]]
+    block_terms <- prepared$outcome_history_terms[block_lags]
+    block_formula <- stats::reformulate(
+      termlabels = c(prepared$restricted_terms, block_terms),
+      response = ".cdmc_current_dose"
+    )
+    block_fit <- stats::lm(formula = block_formula, data = prepared$sample)
+    comparison <- stats::anova(restricted_fit, block_fit)
+
+    data.frame(
+      restriction_name = block_name,
+      lags = paste(block_lags, collapse = ","),
+      terms = paste(block_terms, collapse = ", "),
+      n_terms = length(block_terms),
+      f_statistic = if (nrow(comparison) >= 2L) comparison$F[2L] else NA_real_,
+      p_value = if (nrow(comparison) >= 2L) comparison$`Pr(>F)`[2L] else NA_real_,
+      delta_r_squared = summary(block_fit)$adj.r.squared - summary(restricted_fit)$adj.r.squared,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  table <- do.call(rbind, rows)
+  if (nrow(table) < 1L) {
+    table$adjusted_p_value <- numeric(0)
+    table$passed <- logical(0)
+    return(table)
+  }
+
+  adjusted <- if (identical(p_adjust_method, "none")) {
+    table$p_value
+  } else {
+    stats::p.adjust(table$p_value, method = p_adjust_method)
+  }
+  table$adjusted_p_value <- adjusted
+  table$passed <- is.na(adjusted) | adjusted >= alpha
+  table
 }
 
 cdmc_scia_screen_table <- function(augmented_fit, outcome_history_terms) {
@@ -176,6 +303,8 @@ cdmc_scia_test <- function(
   include_covariate_lags = TRUE,
   include_unit_effects = TRUE,
   include_time_effects = TRUE,
+  restriction_blocks = NULL,
+  p_adjust_method = c("holm", "none"),
   alpha = 0.05
 ) {
   if (!inherits(object, "cdmc_fit")) {
@@ -185,6 +314,8 @@ cdmc_scia_test <- function(
   if (!is.numeric(alpha) || length(alpha) != 1L || !is.finite(alpha) || alpha <= 0 || alpha >= 1) {
     stop("alpha must be a scalar in (0, 1).", call. = FALSE)
   }
+
+  p_adjust_method <- match.arg(p_adjust_method)
 
   prepared <- cdmc_prepare_scia_sample(
     object = object,
@@ -200,10 +331,28 @@ cdmc_scia_test <- function(
   restricted_fit <- stats::lm(formula = prepared$restricted_formula, data = prepared$sample)
   augmented_fit <- stats::lm(formula = prepared$augmented_formula, data = prepared$sample)
   comparison <- stats::anova(restricted_fit, augmented_fit)
+  resolved_restriction_blocks <- cdmc_resolve_scia_restriction_blocks(
+    lags = prepared$lags,
+    outcome_history_terms = prepared$outcome_history_terms,
+    restriction_blocks = restriction_blocks
+  )
+  restriction_table <- cdmc_scia_compare_restrictions(
+    prepared = prepared,
+    restricted_fit = restricted_fit,
+    restriction_blocks = resolved_restriction_blocks,
+    alpha = alpha,
+    p_adjust_method = p_adjust_method
+  )
 
   f_statistic <- if (nrow(comparison) >= 2L) comparison$F[2L] else NA_real_
   p_value <- if (nrow(comparison) >= 2L) comparison$`Pr(>F)`[2L] else NA_real_
   delta_r_squared <- summary(augmented_fit)$adj.r.squared - summary(restricted_fit)$adj.r.squared
+  global_passed <- is.finite(p_value) && p_value >= alpha
+  failed_restrictions <- if (nrow(restriction_table) > 0L) {
+    restriction_table$restriction_name[!restriction_table$passed]
+  } else {
+    character(0)
+  }
 
   result <- list(
     call = match.call(),
@@ -214,6 +363,9 @@ cdmc_scia_test <- function(
     include_covariate_lags = prepared$include_covariate_lags,
     include_unit_effects = prepared$include_unit_effects,
     include_time_effects = prepared$include_time_effects,
+    conditioning_table = cdmc_scia_conditioning_table(prepared),
+    restriction_blocks = resolved_restriction_blocks,
+    p_adjust_method = p_adjust_method,
     alpha = alpha,
     sample_size = nrow(prepared$sample),
     restricted_formula = prepared$restricted_formula,
@@ -224,7 +376,10 @@ cdmc_scia_test <- function(
     f_statistic = f_statistic,
     p_value = p_value,
     delta_r_squared = delta_r_squared,
-    passed = is.finite(p_value) && p_value >= alpha,
+    global_passed = global_passed,
+    restriction_table = restriction_table,
+    failed_restrictions = failed_restrictions,
+    passed = global_passed && length(failed_restrictions) == 0L,
     screen_table = cdmc_scia_screen_table(augmented_fit, prepared$outcome_history_terms),
     sample = prepared$sample,
     fit_object = object
@@ -235,19 +390,34 @@ cdmc_scia_test <- function(
 }
 
 print.cdmc_scia_test <- function(x, ...) {
-  cat("causaldosemc SCIA screening diagnostic\n")
+  cat("causaldosemc SCIA restriction diagnostic\n")
   cat(sprintf("  lag order screened: %d\n", x$lags))
   cat(sprintf("  outcome proxy: %s\n", x$outcome_proxy))
   cat(sprintf("  sample size: %d\n", x$sample_size))
   cat(sprintf("  alpha: %.3f\n", x$alpha))
   if (is.finite(x$f_statistic)) {
-    cat(sprintf("  incremental F statistic: %.6g\n", x$f_statistic))
+    cat(sprintf("  global incremental F statistic: %.6g\n", x$f_statistic))
   }
   if (is.finite(x$p_value)) {
-    cat(sprintf("  p value: %.6g\n", x$p_value))
-    cat(sprintf("  passed: %s\n", if (x$passed) "yes" else "no"))
+    cat(sprintf("  global p value: %.6g\n", x$p_value))
+    cat(sprintf("  global passed: %s\n", if (isTRUE(x$global_passed)) "yes" else "no"))
   }
   cat(sprintf("  adjusted R-squared increment: %.6g\n", x$delta_r_squared))
+  cat(sprintf("  restriction p adjustment: %s\n", x$p_adjust_method))
+  cat(sprintf("  overall passed: %s\n", if (x$passed) "yes" else "no"))
+
+  if (!is.null(x$conditioning_table) && nrow(x$conditioning_table) > 0L) {
+    cat("  conditioning blocks:\n")
+    print(x$conditioning_table, row.names = FALSE)
+  }
+
+  if (!is.null(x$restriction_table) && nrow(x$restriction_table) > 0L) {
+    cat("  restriction checks:\n")
+    print(x$restriction_table[, c("restriction_name", "lags", "p_value", "adjusted_p_value", "passed"), drop = FALSE], row.names = FALSE)
+    if (length(x$failed_restrictions) > 0L) {
+      cat(sprintf("  failed restrictions: %s\n", paste(x$failed_restrictions, collapse = ", ")))
+    }
+  }
 
   if (nrow(x$screen_table) > 0L) {
     cat("  lagged outcome terms:\n")

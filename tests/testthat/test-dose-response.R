@@ -128,3 +128,158 @@ test_that("slope prediction uses a symmetric finite difference under signed dose
   expect_s3_class(dr, "cdmc_dose_response")
   expect_equal(slope$estimate, manual_slope, tolerance = 1e-6)
 })
+
+test_that("gam dose-response supports anchored nonlinear prediction", {
+  testthat::skip_if_not_installed("mgcv")
+
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 0.2,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 9393
+  )
+  panel$y <- panel$y + 0.8 * panel$dose^2
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 9393
+  )
+  dr <- cdmc_dose_response(
+    fit,
+    model = "gam",
+    lag_order = 0,
+    df = 4,
+    include_zero_dose = TRUE
+  )
+
+  zero_pred <- predict(dr, dose = 0)
+  positive_pred <- predict(dr, dose = 0.5)
+  slope <- predict(dr, dose = 0.5, type = "slope")
+
+  expect_s3_class(dr, "cdmc_dose_response")
+  expect_identical(dr$model, "gam")
+  expect_equal(zero_pred$estimate, 0, tolerance = 1e-6)
+  expect_true(positive_pred$estimate > zero_pred$estimate)
+  expect_true(is.finite(slope$estimate))
+})
+
+test_that("tree dose-response supports anchored nonlinear prediction", {
+  testthat::skip_if_not_installed("rpart")
+
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 0,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 9494
+  )
+  panel$y <- panel$y + ifelse(panel$dose > 0.25, 0.8, 0)
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 9494
+  )
+  dr <- cdmc_dose_response(
+    fit,
+    model = "tree",
+    lag_order = 0,
+    include_zero_dose = TRUE
+  )
+
+  zero_pred <- predict(dr, dose = 0)
+  positive_pred <- predict(dr, dose = 0.8)
+  slope <- predict(dr, dose = 0.8, type = "slope")
+
+  expect_s3_class(dr, "cdmc_dose_response")
+  expect_identical(dr$model, "tree")
+  expect_true("dose_lag0" %in% names(dr$coefficients))
+  expect_equal(zero_pred$estimate, 0, tolerance = 1e-6)
+  expect_true(positive_pred$estimate >= zero_pred$estimate)
+  expect_true(is.finite(slope$estimate))
+})
+
+test_that("forest dose-response supports anchored nonlinear prediction", {
+  testthat::skip_if_not_installed("ranger")
+
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 0,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 9595
+  )
+  panel$y <- panel$y + ifelse(panel$dose > 0.25, 0.8, 0)
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 9595
+  )
+  dr <- cdmc_dose_response(
+    fit,
+    model = "forest",
+    lag_order = 0,
+    forest_trees = 50,
+    include_zero_dose = TRUE
+  )
+
+  zero_pred <- predict(dr, dose = 0)
+  positive_pred <- predict(dr, dose = 0.8)
+  slope <- predict(dr, dose = 0.8, type = "slope")
+
+  expect_s3_class(dr, "cdmc_dose_response")
+  expect_identical(dr$model, "forest")
+  expect_identical(dr$forest_trees, 50L)
+  expect_true("dose_lag0" %in% names(dr$coefficients))
+  expect_equal(zero_pred$estimate, 0, tolerance = 1e-6)
+  expect_true(positive_pred$estimate >= zero_pred$estimate)
+  expect_true(is.finite(slope$estimate))
+})

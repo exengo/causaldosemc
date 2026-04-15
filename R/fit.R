@@ -29,17 +29,11 @@ cdmc_build_joint_effect_design <- function(
   lag_array[is.na(lag_array)] <- 0
 
   sample_indices <- which(fit_mask, arr.ind = TRUE)
-  history <- data.frame(
-    row = sample_indices[, 1L],
-    col = sample_indices[, 2L],
-    tau = 0,
-    stringsAsFactors = FALSE
+  history <- cdmc_build_sample_history(
+    lag_array = lag_array,
+    sample_indices = sample_indices,
+    tau = numeric(nrow(sample_indices))
   )
-
-  for (index in seq_len(dim(lag_array)[3L])) {
-    lag_name <- dimnames(lag_array)[[3L]][index]
-    history[[lag_name]] <- lag_array[, , index][sample_indices]
-  }
 
   design_info <- cdmc_build_response_design(
     history = history,
@@ -246,6 +240,85 @@ cdmc_fit_model_components <- function(
   list(baseline = baseline_fit, effect = effect_fit)
 }
 
+cdmc_select_fit_lambda <- function(
+  y_matrix,
+  x_matrices,
+  mask,
+  weight_matrix = NULL,
+  lambda = NULL,
+  lambda_fraction = 0.25,
+  lambda_selection = c("heuristic", "cv"),
+  lambda_grid = NULL,
+  nlambda = 5L,
+  lambda_min_ratio = 0.05,
+  cv_rounds = 5L,
+  cv_block_size = 2L,
+  rank_max,
+  outer_maxit = 20L,
+  fe_maxit = 200L,
+  soft_maxit = 100L,
+  tol = 1e-5,
+  fe_tol = 1e-8,
+  verbose = FALSE
+) {
+  lambda_selection <- match.arg(lambda_selection)
+
+  if (is.null(lambda)) {
+    if (identical(lambda_selection, "cv")) {
+      lambda_tuning <- cdmc_tune_lambda(
+        y_matrix = y_matrix,
+        x_matrices = x_matrices,
+        mask = mask,
+        weight_matrix = weight_matrix,
+        rank_max = rank_max,
+        lambda_grid = lambda_grid,
+        nlambda = nlambda,
+        lambda_min_ratio = lambda_min_ratio,
+        cv_rounds = cv_rounds,
+        cv_block_size = cv_block_size,
+        outer_maxit = outer_maxit,
+        fe_maxit = fe_maxit,
+        soft_maxit = soft_maxit,
+        tol = tol,
+        fe_tol = fe_tol,
+        verbose = verbose
+      )
+      lambda <- lambda_tuning$selected_lambda
+    } else {
+      reference_lambda0 <- cdmc_default_lambda(
+        y_matrix = y_matrix,
+        x_matrices = x_matrices,
+        mask = mask,
+        weight_matrix = weight_matrix,
+        lambda_fraction = 1,
+        fe_maxit = fe_maxit,
+        fe_tol = fe_tol
+      )
+      lambda <- lambda_fraction * reference_lambda0
+      lambda_tuning <- list(
+        method = "heuristic",
+        selected_lambda = lambda,
+        reference_lambda0 = reference_lambda0,
+        lambda_fraction = lambda_fraction
+      )
+    }
+  } else {
+    lambda_tuning <- list(
+      method = "fixed",
+      selected_lambda = lambda
+    )
+  }
+
+  if (!is.numeric(lambda) || length(lambda) != 1L || !is.finite(lambda) || lambda < 0) {
+    stop("lambda must be a single nonnegative numeric value.", call. = FALSE)
+  }
+
+  list(
+    lambda = as.numeric(lambda),
+    lambda_tuning = lambda_tuning
+  )
+}
+
 cdmc_fit <- function(
   data,
   outcome,
@@ -366,55 +439,29 @@ cdmc_fit <- function(
     prepared$x_matrices
   }
 
-  if (is.null(lambda)) {
-    if (lambda_selection == "cv") {
-      lambda_tuning <- cdmc_tune_lambda(
-        y_matrix = prepared$y_matrix,
-        x_matrices = objective_x_matrices,
-        mask = optimization_mask,
-        weight_matrix = fit_weight_matrix,
-        rank_max = rank_max,
-        lambda_grid = lambda_grid,
-        nlambda = nlambda,
-        lambda_min_ratio = lambda_min_ratio,
-        cv_rounds = cv_rounds,
-        cv_block_size = cv_block_size,
-        outer_maxit = outer_maxit,
-        fe_maxit = fe_maxit,
-        soft_maxit = soft_maxit,
-        tol = tol,
-        fe_tol = fe_tol,
-        verbose = verbose
-      )
-      lambda <- lambda_tuning$selected_lambda
-    } else {
-      reference_lambda0 <- cdmc_default_lambda(
-        y_matrix = prepared$y_matrix,
-        x_matrices = objective_x_matrices,
-        mask = optimization_mask,
-        weight_matrix = fit_weight_matrix,
-        lambda_fraction = 1,
-        fe_maxit = fe_maxit,
-        fe_tol = fe_tol
-      )
-      lambda <- lambda_fraction * reference_lambda0
-      lambda_tuning <- list(
-        method = "heuristic",
-        selected_lambda = lambda,
-        reference_lambda0 = reference_lambda0,
-        lambda_fraction = lambda_fraction
-      )
-    }
-  } else {
-    lambda_tuning <- list(
-      method = "fixed",
-      selected_lambda = lambda
-    )
-  }
-
-  if (!is.numeric(lambda) || length(lambda) != 1L || !is.finite(lambda) || lambda < 0) {
-    stop("lambda must be a single nonnegative numeric value.", call. = FALSE)
-  }
+  lambda_selection_result <- cdmc_select_fit_lambda(
+    y_matrix = prepared$y_matrix,
+    x_matrices = objective_x_matrices,
+    mask = optimization_mask,
+    weight_matrix = fit_weight_matrix,
+    lambda = lambda,
+    lambda_fraction = lambda_fraction,
+    lambda_selection = lambda_selection,
+    lambda_grid = lambda_grid,
+    nlambda = nlambda,
+    lambda_min_ratio = lambda_min_ratio,
+    cv_rounds = cv_rounds,
+    cv_block_size = cv_block_size,
+    rank_max = rank_max,
+    outer_maxit = outer_maxit,
+    fe_maxit = fe_maxit,
+    soft_maxit = soft_maxit,
+    tol = tol,
+    fe_tol = fe_tol,
+    verbose = verbose
+  )
+  lambda <- lambda_selection_result$lambda
+  lambda_tuning <- lambda_selection_result$lambda_tuning
 
   fit_components <- cdmc_fit_model_components(
     prepared = prepared,
@@ -507,6 +554,18 @@ cdmc_fit <- function(
   result
 }
 
+cdmc_print_empirical_lambda_note <- function(lambda_method) {
+  if (!identical(lambda_method, "heuristic")) {
+    return(invisible(NULL))
+  }
+
+  cat(
+    "  note: empirical workflows should prefer lambda_selection = \"cv\" when blocked cross-validation has enough zero-dose support.\n"
+  )
+
+  invisible(NULL)
+}
+
 print.cdmc_fit <- function(x, ...) {
   cat("causaldosemc fit\n")
   cat(sprintf("  units x times: %d x %d\n", x$n_units, x$n_times))
@@ -524,6 +583,7 @@ print.cdmc_fit <- function(x, ...) {
       x$lambda_tuning$mean_scores[[x$lambda_tuning$selected_index]]
     ))
   }
+  cdmc_print_empirical_lambda_note(x$lambda_tuning$method)
   cat(sprintf("  effective rank: %d\n", x$baseline$effective_rank))
   cat(sprintf("  baseline solver: %s\n", x$baseline$solver))
   cat(sprintf(
@@ -580,6 +640,7 @@ print.summary.cdmc_fit <- function(x, ...) {
   cat(sprintf("  eligible zero-dose cells: %d\n", x$eligible_controls))
   cat(sprintf("  lambda: %.6g\n", x$lambda))
   cat(sprintf("  lambda selection: %s\n", x$lambda_method))
+  cdmc_print_empirical_lambda_note(x$lambda_method)
   cat(sprintf("  rank_max: %d\n", x$rank_max))
   cat(sprintf("  effective rank: %d\n", x$effective_rank))
   cat(sprintf(

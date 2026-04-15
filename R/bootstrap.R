@@ -3,95 +3,89 @@ cdmc_bootstrap_sample_data <- function(data, unit, original_columns) {
     data <- data[!is.na(data$.cdmc_observed) & data$.cdmc_observed, , drop = FALSE]
   }
   unit_ids <- unique(data[[unit]])
-  sampled_units <- sample(unit_ids, length(unit_ids), replace = TRUE)
-  bootstrap_chunks <- vector("list", length(sampled_units))
-
-  for (sample_index in seq_along(sampled_units)) {
-    bootstrap_chunk <- data[data[[unit]] == sampled_units[[sample_index]], original_columns, drop = FALSE]
-    bootstrap_chunk[[unit]] <- as.character(bootstrap_chunk[[unit]])
-    bootstrap_chunk[[unit]] <- paste0("boot_unit_", sample_index)
-    bootstrap_chunks[[sample_index]] <- bootstrap_chunk
+  if (length(unit_ids) == 0L) {
+    return(data[, original_columns, drop = FALSE])
   }
+
+  sampled_units <- as.character(sample(unit_ids, length(unit_ids), replace = TRUE))
+  unit_chunks <- split(data[, original_columns, drop = FALSE], data[[unit]], drop = TRUE)
+  bootstrap_chunks <- unname(unit_chunks[sampled_units])
+
+  bootstrap_chunks <- lapply(seq_along(bootstrap_chunks), function(sample_index) {
+    bootstrap_chunk <- bootstrap_chunks[[sample_index]]
+    bootstrap_chunk[[unit]] <- paste0("boot_unit_", sample_index)
+    bootstrap_chunk
+  })
 
   do.call(rbind, bootstrap_chunks)
 }
 
-cdmc_default_bootstrap_statistics <- function(object) {
-  if (inherits(object, "cdmc_fit")) {
-    return(c("coefficients", "average_tau"))
-  }
-  if (inherits(object, "cdmc_dynamic_estimand")) {
-    return("estimate")
-  }
-  if (inherits(object, "cdmc_dose_response")) {
-    return("coefficients")
-  }
-  if (inherits(object, "cdmc_dr_fit")) {
-    return(c("coefficients", "average_tau_dr", "average_tau_linear"))
-  }
-  if (inherits(object, "cdmc_placebo_test") ||
-      inherits(object, "cdmc_carryover_test") ||
-      inherits(object, "cdmc_carryover_refit_test")) {
-    return("mean_tau")
-  }
-  if (inherits(object, "cdmc_joint_placebo_test")) {
-    return(c("period_mean_tau", "joint_p_value"))
-  }
-  if (inherits(object, "cdmc_equivalence_test")) {
-    return(c("mean_tau", "equivalence_p_value"))
-  }
-  if (inherits(object, "cdmc_scia_test")) {
-    return(c("f_statistic", "p_value"))
-  }
-
-  stop(
-    "object must inherit from 'cdmc_fit', 'cdmc_dose_response', 'cdmc_dr_fit', or a supported diagnostic class.",
-    call. = FALSE
+cdmc_supported_bootstrap_classes <- function() {
+  c(
+    "cdmc_fit",
+    "cdmc_dynamic_estimand",
+    "cdmc_dose_response",
+    "cdmc_dr_fit",
+    "cdmc_placebo_test",
+    "cdmc_carryover_test",
+    "cdmc_carryover_refit_test",
+    "cdmc_joint_placebo_test",
+    "cdmc_equivalence_test",
+    "cdmc_scia_test"
   )
 }
 
-cdmc_supported_bootstrap_statistics <- function(object) {
-  if (inherits(object, "cdmc_fit")) {
-    return(c("coefficients", "average_tau"))
+cdmc_bootstrap_object_class <- function(object) {
+  class_name <- cdmc_first_inherited_class(object, cdmc_supported_bootstrap_classes())
+  if (is.null(class_name)) {
+    stop(
+      "object must inherit from 'cdmc_fit', 'cdmc_dose_response', 'cdmc_dr_fit', or a supported diagnostic class.",
+      call. = FALSE
+    )
   }
-  if (inherits(object, "cdmc_dynamic_estimand")) {
-    return("estimate")
-  }
-  if (inherits(object, "cdmc_dose_response")) {
-    return(c("coefficients", "prediction"))
-  }
-  if (inherits(object, "cdmc_dr_fit")) {
-    return(c(
+
+  class_name
+}
+
+cdmc_bootstrap_statistics_map <- function(default = TRUE) {
+  statistics <- list(
+    cdmc_fit = c("coefficients", "average_tau"),
+    cdmc_dynamic_estimand = "estimate",
+    cdmc_dose_response = c("coefficients", "prediction"),
+    cdmc_dr_fit = c(
       "coefficients",
       "average_tau_dr",
       "average_tau_linear",
       "lag_average_tau_dr",
       "dose_contrast_dr"
-    ))
-  }
-  if (inherits(object, "cdmc_placebo_test") ||
-      inherits(object, "cdmc_carryover_test") ||
-      inherits(object, "cdmc_carryover_refit_test")) {
-    return("mean_tau")
-  }
-  if (inherits(object, "cdmc_joint_placebo_test")) {
-    return(c("period_mean_tau", "joint_p_value"))
-  }
-  if (inherits(object, "cdmc_equivalence_test")) {
-    return(c("mean_tau", "equivalence_p_value"))
-  }
-  if (inherits(object, "cdmc_scia_test")) {
-    return(c("f_statistic", "p_value"))
+    ),
+    cdmc_placebo_test = "mean_tau",
+    cdmc_carryover_test = "mean_tau",
+    cdmc_carryover_refit_test = "mean_tau",
+    cdmc_joint_placebo_test = c("period_mean_tau", "window_mean_tau", "joint_p_value"),
+    cdmc_equivalence_test = c("mean_tau", "equivalence_p_value"),
+    cdmc_scia_test = c("f_statistic", "p_value", "restriction_p_value", "restriction_adj_p_value")
+  )
+
+  if (isTRUE(default)) {
+    statistics$cdmc_dose_response <- "coefficients"
+    statistics$cdmc_dr_fit <- c("coefficients", "average_tau_dr", "average_tau_linear")
+    statistics$cdmc_scia_test <- c("f_statistic", "p_value")
   }
 
-  stop(
-    "object must inherit from 'cdmc_fit', 'cdmc_dose_response', 'cdmc_dr_fit', or a supported diagnostic class.",
-    call. = FALSE
-  )
+  statistics
+}
+
+cdmc_default_bootstrap_statistics <- function(object) {
+  cdmc_bootstrap_statistics_map(default = TRUE)[[cdmc_bootstrap_object_class(object)]]
+}
+
+cdmc_supported_bootstrap_statistics <- function(object) {
+  cdmc_bootstrap_statistics_map(default = FALSE)[[cdmc_bootstrap_object_class(object)]]
 }
 
 cdmc_bootstrap_source_object <- function(object) {
-  if (inherits(object, "cdmc_fit") || inherits(object, "cdmc_dr_fit")) {
+  if (cdmc_inherits_any(object, c("cdmc_fit", "cdmc_dr_fit"))) {
     return(object)
   }
 
@@ -107,7 +101,7 @@ cdmc_bootstrap_source_object <- function(object) {
       return(source_object$fit_object)
     }
 
-    if (inherits(source_object, "cdmc_fit") || inherits(source_object, "cdmc_dr_fit")) {
+    if (cdmc_inherits_any(source_object, c("cdmc_fit", "cdmc_dr_fit"))) {
       return(source_object)
     }
 
@@ -127,7 +121,7 @@ cdmc_bootstrap_source_object <- function(object) {
     return(object$fit_object)
   }
 
-  if (inherits(object, c("cdmc_placebo_test", "cdmc_carryover_test", "cdmc_carryover_refit_test", "cdmc_joint_placebo_test", "cdmc_equivalence_test", "cdmc_scia_test"))) {
+  if (cdmc_inherits_any(object, c("cdmc_placebo_test", "cdmc_carryover_test", "cdmc_carryover_refit_test", "cdmc_joint_placebo_test", "cdmc_equivalence_test", "cdmc_scia_test"))) {
     if (!inherits(object$fit_object, "cdmc_fit")) {
       stop(
         "Diagnostic bootstrap requires a stored parent cdmc_fit object. Recreate the diagnostic with the current package version.",
@@ -154,6 +148,42 @@ cdmc_bootstrap_period_label <- function(period) {
   "0"
 }
 
+cdmc_bootstrap_safe_label <- function(label) {
+  label <- gsub("[^A-Za-z0-9]+", "_", as.character(label))
+  label <- gsub("_+", "_", label)
+  label <- gsub("^_+|_+$", "", label)
+  if (!nzchar(label)) {
+    return("window")
+  }
+
+  label
+}
+
+cdmc_joint_placebo_mean_names <- function(object) {
+  if (!is.data.frame(object$tests) || nrow(object$tests) < 1L) {
+    return(character(0))
+  }
+
+  if (all(c("n_periods", "period", "window_name") %in% names(object$tests)) &&
+      all(object$tests$n_periods == 1L) &&
+      all(!is.na(object$tests$period)) &&
+      all(object$tests$window_name == paste0("period_", vapply(object$tests$period, cdmc_bootstrap_period_label, character(1))))) {
+    return(paste0(
+      "joint_placebo_mean_tau_period_",
+      vapply(object$tests$period, cdmc_bootstrap_period_label, character(1))
+    ))
+  }
+
+  paste0(
+    "joint_placebo_mean_tau_window_",
+    vapply(
+      if ("window_name" %in% names(object$tests)) object$tests$window_name else seq_len(nrow(object$tests)),
+      cdmc_bootstrap_safe_label,
+      character(1)
+    )
+  )
+}
+
 cdmc_dr_design_columns <- function(object) {
   object$effect$design_columns %||% paste0("dose_lag", seq.int(0L, object$lag_order))
 }
@@ -173,20 +203,7 @@ cdmc_dr_coefficient_vector <- function(object) {
 cdmc_dr_history_table <- function(object) {
   lag_array <- cdmc_build_lagged_doses(object$dose_matrix, lag_order = object$lag_order)
   sample_indices <- which(object$effect$sample_mask, arr.ind = TRUE)
-  design_columns <- dimnames(lag_array)[[3L]]
-
-  if (nrow(sample_indices) == 0L) {
-    out <- as.data.frame(matrix(numeric(0), nrow = 0L, ncol = length(design_columns)))
-    names(out) <- design_columns
-    return(out)
-  }
-
-  history_matrix <- do.call(
-    cbind,
-    lapply(seq_len(dim(lag_array)[3L]), function(index) lag_array[, , index][sample_indices])
-  )
-  colnames(history_matrix) <- design_columns
-  as.data.frame(history_matrix)
+  data.frame(cdmc_sample_array_matrix(lag_array, sample_indices), check.names = FALSE)
 }
 
 cdmc_resolve_dr_contrast_history <- function(object, history = NULL, default = c("ones", "zero")) {
@@ -275,6 +292,9 @@ cdmc_bootstrap_evaluate_target <- function(object, bootstrap_fit) {
         model = source_target$model,
         lag_order = source_target$lag_order,
         df = source_target$design_info$df %||% 4L,
+        forest_trees = source_target$forest_trees %||% 200L,
+        forest_mtry = source_target$forest_mtry,
+        forest_min_node_size = source_target$forest_min_node_size,
         include_zero_dose = source_target$include_zero_dose,
         weights = source_target$weights
       )
@@ -305,13 +325,21 @@ cdmc_bootstrap_evaluate_target <- function(object, bootstrap_fit) {
       model = object$model,
       lag_order = object$lag_order,
       df = object$design_info$df %||% 4L,
+      forest_trees = object$forest_trees %||% 200L,
+      forest_mtry = object$forest_mtry,
+      forest_min_node_size = object$forest_min_node_size,
       include_zero_dose = object$include_zero_dose,
       weights = object$weights
     ))
   }
 
   if (inherits(object, "cdmc_placebo_test")) {
-    return(cdmc_placebo_test(bootstrap_fit, periods = object$periods, verbose = FALSE))
+    return(cdmc_placebo_test(
+      bootstrap_fit,
+      periods = object$periods,
+      rerun_tuning = object$rerun_tuning %||% FALSE,
+      verbose = FALSE
+    ))
   }
 
   if (inherits(object, "cdmc_carryover_test")) {
@@ -319,15 +347,22 @@ cdmc_bootstrap_evaluate_target <- function(object, bootstrap_fit) {
   }
 
   if (inherits(object, "cdmc_carryover_refit_test")) {
-    return(cdmc_carryover_refit_test(bootstrap_fit, periods = object$periods, verbose = FALSE))
+    return(cdmc_carryover_refit_test(
+      bootstrap_fit,
+      periods = object$periods,
+      rerun_tuning = object$rerun_tuning %||% FALSE,
+      verbose = FALSE
+    ))
   }
 
   if (inherits(object, "cdmc_joint_placebo_test")) {
     return(cdmc_joint_placebo_test(
       bootstrap_fit,
       periods = object$periods,
+      placebo_windows = object$placebo_windows %||% NULL,
       alpha = object$alpha,
       equivalence_margin = object$equivalence_margin,
+      rerun_tuning = object$rerun_tuning %||% FALSE,
       verbose = FALSE
     ))
   }
@@ -351,6 +386,8 @@ cdmc_bootstrap_evaluate_target <- function(object, bootstrap_fit) {
       include_covariate_lags = object$include_covariate_lags,
       include_unit_effects = object$include_unit_effects,
       include_time_effects = object$include_time_effects,
+      restriction_blocks = object$restriction_blocks,
+      p_adjust_method = object$p_adjust_method %||% "holm",
       alpha = object$alpha
     ))
   }
@@ -570,12 +607,9 @@ cdmc_collect_bootstrap_statistics <- function(
   }
 
   if (inherits(object, "cdmc_joint_placebo_test")) {
-    if ("period_mean_tau" %in% statistics) {
+    if ("period_mean_tau" %in% statistics || "window_mean_tau" %in% statistics) {
       period_means <- object$tests$mean_tau
-      names(period_means) <- paste0(
-        "joint_placebo_mean_tau_period_",
-        vapply(object$tests$period, cdmc_bootstrap_period_label, character(1))
-      )
+      names(period_means) <- cdmc_joint_placebo_mean_names(object)
       out <- c(out, period_means)
     }
 
@@ -599,6 +633,16 @@ cdmc_collect_bootstrap_statistics <- function(
     }
     if ("p_value" %in% statistics) {
       out <- c(out, scia_p_value = object$p_value)
+    }
+    if ("restriction_p_value" %in% statistics && nrow(object$restriction_table) > 0L) {
+      block_p_values <- object$restriction_table$p_value
+      names(block_p_values) <- paste0("scia_restriction_p_value_", object$restriction_table$restriction_name)
+      out <- c(out, block_p_values)
+    }
+    if ("restriction_adj_p_value" %in% statistics && nrow(object$restriction_table) > 0L) {
+      block_adj_p_values <- object$restriction_table$adjusted_p_value
+      names(block_adj_p_values) <- paste0("scia_restriction_adj_p_value_", object$restriction_table$restriction_name)
+      out <- c(out, block_adj_p_values)
     }
   }
 
@@ -664,14 +708,30 @@ cdmc_build_bootstrap_fit_spec <- function(object, rerun_tuning = NULL) {
       gps_model = object$gps_model %||% "linear",
       gps_df = object$gps_df %||% 4L,
       gps_spline_covariates = object$gps_spline_covariates %||% object$weight_covariates %||% NULL,
+      gps_stack_models = object$gps_stack_models %||% NULL,
       gps_bandwidth = object$gps_bandwidth %||% NULL,
       gps_forest_trees = object$gps_forest_trees %||% 200L,
       gps_forest_mtry = object$gps_forest_mtry %||% NULL,
       gps_forest_min_node_size = object$gps_forest_min_node_size %||% NULL,
+      gps_boost_trees = object$gps_boost_trees %||% 200L,
+      gps_boost_depth = object$gps_boost_depth %||% 2L,
+      gps_boost_shrinkage = object$gps_boost_shrinkage %||% 0.05,
+      gps_boost_min_obs_node = object$gps_boost_min_obs_node %||% 10L,
       cbps_standardize = object$cbps_standardize %||% TRUE,
       cbps_method = object$cbps_method %||% "over",
       cbps_iterations = object$cbps_iterations %||% 1000L,
       cbps_twostep = object$cbps_twostep %||% TRUE,
+      adaptive_balance_methods = object$adaptive_balance_methods %||% NULL,
+      entropy_balance_degree = object$entropy_balance_degree %||% 1L,
+      entropy_balance_standardize = object$entropy_balance_standardize %||% TRUE,
+      entropy_balance_iterations = object$entropy_balance_iterations %||% 1000L,
+      entropy_balance_reltol = object$entropy_balance_reltol %||% 1e-8,
+      kernel_balance_degree = object$kernel_balance_degree %||% 1L,
+      kernel_balance_centers = object$kernel_balance_centers %||% 25L,
+      kernel_balance_bandwidth = object$kernel_balance_bandwidth %||% NULL,
+      kernel_balance_standardize = object$kernel_balance_standardize %||% TRUE,
+      kernel_balance_iterations = object$kernel_balance_iterations %||% 1000L,
+      kernel_balance_reltol = object$kernel_balance_reltol %||% 1e-8,
       stabilize_weights = object$stabilize_weights,
       max_weight = object$max_weight,
       n_folds = object$n_folds,
@@ -833,21 +893,7 @@ cdmc_bootstrap <- function(
 ) {
   missing_statistics <- missing(statistics)
 
-  if (!inherits(object, "cdmc_fit") &&
-  !inherits(object, "cdmc_dynamic_estimand") &&
-      !inherits(object, "cdmc_dose_response") &&
-      !inherits(object, "cdmc_dr_fit") &&
-      !inherits(object, "cdmc_placebo_test") &&
-      !inherits(object, "cdmc_carryover_test") &&
-      !inherits(object, "cdmc_carryover_refit_test") &&
-      !inherits(object, "cdmc_joint_placebo_test") &&
-      !inherits(object, "cdmc_equivalence_test") &&
-      !inherits(object, "cdmc_scia_test")) {
-    stop(
-      "object must inherit from 'cdmc_fit', 'cdmc_dose_response', 'cdmc_dr_fit', or a supported diagnostic class.",
-      call. = FALSE
-    )
-  }
+  cdmc_bootstrap_object_class(object)
 
   prediction_type <- match.arg(prediction_type)
 

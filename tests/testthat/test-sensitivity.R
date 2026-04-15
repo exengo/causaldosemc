@@ -16,10 +16,26 @@ manual_sensitivity_refit_source_fit <- function(source_fit, data) {
         gps_model = source_fit$gps_model,
         gps_df = if (is.null(source_fit$gps_df)) 4L else source_fit$gps_df,
         gps_spline_covariates = source_fit$gps_spline_covariates,
+        gps_stack_models = source_fit$gps_stack_models,
         gps_bandwidth = source_fit$gps_bandwidth,
         gps_forest_trees = source_fit$gps_forest_trees,
         gps_forest_mtry = source_fit$gps_forest_mtry,
         gps_forest_min_node_size = source_fit$gps_forest_min_node_size,
+        gps_boost_trees = source_fit$gps_boost_trees,
+        gps_boost_depth = source_fit$gps_boost_depth,
+        gps_boost_shrinkage = source_fit$gps_boost_shrinkage,
+        gps_boost_min_obs_node = source_fit$gps_boost_min_obs_node,
+        adaptive_balance_methods = source_fit$adaptive_balance_methods,
+        entropy_balance_degree = source_fit$entropy_balance_degree,
+        entropy_balance_standardize = source_fit$entropy_balance_standardize,
+        entropy_balance_iterations = source_fit$entropy_balance_iterations,
+        entropy_balance_reltol = source_fit$entropy_balance_reltol,
+        kernel_balance_degree = source_fit$kernel_balance_degree,
+        kernel_balance_centers = source_fit$kernel_balance_centers,
+        kernel_balance_bandwidth = source_fit$kernel_balance_bandwidth,
+        kernel_balance_standardize = source_fit$kernel_balance_standardize,
+        kernel_balance_iterations = source_fit$kernel_balance_iterations,
+        kernel_balance_reltol = source_fit$kernel_balance_reltol,
         stabilize_weights = source_fit$stabilize_weights,
         max_weight = source_fit$max_weight,
         n_folds = source_fit$n_folds,
@@ -86,6 +102,9 @@ manual_sensitivity_target <- function(object, refit_fit) {
       model = object$model,
       lag_order = object$lag_order,
       df = if (is.null(object$design_info$df)) 4L else object$design_info$df,
+      forest_trees = object$forest_trees %||% 200L,
+      forest_mtry = object$forest_mtry,
+      forest_min_node_size = object$forest_min_node_size,
       include_zero_dose = object$include_zero_dose,
       weights = object$weights
     ))
@@ -98,6 +117,9 @@ manual_sensitivity_target <- function(object, refit_fit) {
         model = object$source_object$model,
         lag_order = object$source_object$lag_order,
         df = if (is.null(object$source_object$design_info$df)) 4L else object$source_object$design_info$df,
+        forest_trees = object$source_object$forest_trees %||% 200L,
+        forest_mtry = object$source_object$forest_mtry,
+        forest_min_node_size = object$source_object$forest_min_node_size,
         include_zero_dose = object$source_object$include_zero_dose,
         weights = object$source_object$weights
       )
@@ -686,6 +708,129 @@ test_that("sensitivity scan can compare linear and forest Gaussian GPS nuisance 
   expect_true("delta_mean_tau_dr" %in% names(scan$results))
 })
 
+test_that("sensitivity scan can replay stacked Gaussian GPS nuisance models", {
+  testthat::skip_if_not_installed("rpart")
+
+  panel <- simulate_cdmc_data(
+    n_units = 20,
+    n_times = 10,
+    rank = 2,
+    beta = 0.6,
+    lag_beta = NULL,
+    n_covariates = 2,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1788
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  interaction_score <- panel$x2 + panel$time / max(panel$time)
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.15 + panel$x1[active]^2 + ifelse(interaction_score[active] > stats::median(interaction_score), 0.5, -0.2)
+  )
+  panel$y <- panel$y + 0.5 * (panel$dose - original_dose)
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = c("x1", "x2"),
+    weight_method = "gaussian_gps",
+    gps_model = "linear",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1788
+  )
+
+  scan <- cdmc_sensitivity_scan(
+    fit,
+    washout_grid = fit$washout,
+    zero_tolerance_grid = fit$zero_tolerance,
+    weight_specs = list(
+      stack = list(
+        weight_method = "gaussian_gps",
+        gps_model = "stack",
+        gps_stack_models = c("linear", "spline", "tree")
+      )
+    )
+  )
+
+  expect_s3_class(scan, "cdmc_sensitivity_scan")
+  expect_true(all(c("current", "stack") %in% scan$results$weight_scenario))
+  expect_true(all(scan$results$weight_mode == "gaussian_gps"))
+  expect_true(any(scan$results$weight_scenario == "stack" & scan$results$fit_success))
+  expect_true("delta_mean_tau_dr" %in% names(scan$results))
+})
+
+test_that("sensitivity scan can replay boosted Gaussian GPS nuisance models", {
+  testthat::skip_if_not_installed("gbm")
+
+  panel <- simulate_cdmc_data(
+    n_units = 20,
+    n_times = 10,
+    rank = 2,
+    beta = 0.6,
+    lag_beta = NULL,
+    n_covariates = 2,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1791
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  interaction_score <- panel$x2 + panel$time / max(panel$time)
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.15 + panel$x1[active]^2 + 0.4 * interaction_score[active]
+  )
+  panel$y <- panel$y + 0.5 * (panel$dose - original_dose)
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = c("x1", "x2"),
+    weight_method = "gaussian_gps",
+    gps_model = "linear",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1791
+  )
+
+  scan <- cdmc_sensitivity_scan(
+    fit,
+    washout_grid = fit$washout,
+    zero_tolerance_grid = fit$zero_tolerance,
+    weight_specs = list(
+      boost = list(
+        weight_method = "gaussian_gps",
+        gps_model = "boost",
+        gps_boost_trees = 40L,
+        gps_boost_depth = 2L,
+        gps_boost_shrinkage = 0.05,
+        gps_boost_min_obs_node = 3L
+      )
+    )
+  )
+
+  expect_s3_class(scan, "cdmc_sensitivity_scan")
+  expect_true(all(c("current", "boost") %in% scan$results$weight_scenario))
+  expect_true(all(scan$results$weight_mode == "gaussian_gps"))
+  expect_true(any(scan$results$weight_scenario == "boost" & scan$results$fit_success))
+  expect_true("delta_mean_tau_dr" %in% names(scan$results))
+})
+
 test_that("sensitivity scan can replay internal CBPS weighting", {
   testthat::skip_if_not_installed("CBPS")
 
@@ -728,6 +873,148 @@ test_that("sensitivity scan can replay internal CBPS weighting", {
   expect_s3_class(scan, "cdmc_sensitivity_scan")
   expect_true(all(c("current", "cbps") %in% scan$results$weight_scenario))
   expect_true(all(c("gaussian_gps", "cbps") %in% scan$results$weight_mode))
+  expect_true("delta_mean_tau_dr" %in% names(scan$results))
+})
+
+test_that("sensitivity scan can replay internal entropy-balance weighting", {
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 8,
+    rank = 2,
+    beta = 0.8,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1782
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "gaussian_gps",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1782
+  )
+
+  scan <- cdmc_sensitivity_scan(
+    fit,
+    washout_grid = fit$washout,
+    zero_tolerance_grid = fit$zero_tolerance,
+    weight_specs = list(entropy_balance = list(
+      weight_method = "entropy_balance",
+      entropy_balance_iterations = 500L
+    ))
+  )
+
+  expect_s3_class(scan, "cdmc_sensitivity_scan")
+  expect_true(all(c("current", "entropy_balance") %in% scan$results$weight_scenario))
+  expect_true(all(c("gaussian_gps", "entropy_balance") %in% scan$results$weight_mode))
+  expect_true("delta_mean_tau_dr" %in% names(scan$results))
+})
+
+test_that("sensitivity scan can replay internal kernel-balance weighting", {
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 8,
+    rank = 2,
+    beta = 0.8,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1788
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "gaussian_gps",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1788
+  )
+
+  scan <- cdmc_sensitivity_scan(
+    fit,
+    washout_grid = fit$washout,
+    zero_tolerance_grid = fit$zero_tolerance,
+    weight_specs = list(kernel_balance = list(
+      weight_method = "kernel_balance",
+      kernel_balance_centers = 6L,
+      kernel_balance_iterations = 400L
+    ))
+  )
+
+  expect_s3_class(scan, "cdmc_sensitivity_scan")
+  expect_true(all(c("current", "kernel_balance") %in% scan$results$weight_scenario))
+  expect_true(all(c("gaussian_gps", "kernel_balance") %in% scan$results$weight_mode))
+  expect_true("delta_mean_tau_dr" %in% names(scan$results))
+})
+
+test_that("sensitivity scan can replay internal adaptive-balance weighting", {
+  panel <- simulate_cdmc_data(
+    n_units = 20,
+    n_times = 10,
+    rank = 2,
+    beta = 0.8,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.12,
+    switch_off_prob = 0.5,
+    seed = 1798
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "gaussian_gps",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1798
+  )
+
+  scan <- cdmc_sensitivity_scan(
+    fit,
+    washout_grid = fit$washout,
+    zero_tolerance_grid = fit$zero_tolerance,
+    weight_specs = list(adaptive_balance = list(
+      weight_method = "adaptive_balance",
+      adaptive_balance_methods = c("entropy_balance", "kernel_balance"),
+      kernel_balance_centers = 6L,
+      entropy_balance_iterations = 400L,
+      kernel_balance_iterations = 400L
+    ))
+  )
+
+  expect_s3_class(scan, "cdmc_sensitivity_scan")
+  expect_true(all(c("current", "adaptive_balance") %in% scan$results$weight_scenario))
+  expect_true(all(c("gaussian_gps", "adaptive_balance") %in% scan$results$weight_mode))
   expect_true("delta_mean_tau_dr" %in% names(scan$results))
 })
 
@@ -994,6 +1281,85 @@ test_that("formal sensitivity bounds support energy-budget perturbations", {
   expect_equal(energy_row$radius, 0.5 * energy_multiplier, tolerance = 1e-8)
 })
 
+test_that("formal sensitivity bounds support unit- and time-scope perturbations", {
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 1,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 1937
+  )
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 1,
+    seed = 1937
+  )
+
+  bounds_unit <- cdmc_sensitivity_bounds(
+    fit,
+    statistics = "coefficients",
+    gamma_grid = 0.5,
+    perturbation_scope = "unit",
+    scale = "manual",
+    scale_value = 1
+  )
+  bounds_time <- cdmc_sensitivity_bounds(
+    fit,
+    statistics = "coefficients",
+    gamma_grid = 0.5,
+    perturbation_scope = "time",
+    scale = "manual",
+    scale_value = 1
+  )
+
+  operator <- qr.coef(
+    qr(fit$effect$design_info$design),
+    diag(1, nrow = nrow(fit$effect$design_info$design), ncol = nrow(fit$effect$design_info$design))
+  )
+  operator <- as.matrix(operator)
+  operator[is.na(operator)] <- 0
+  sample_indices <- which(fit$effect$sample_mask, arr.ind = TRUE)
+  unit_ids <- as.character(fit$unit_levels[sample_indices[, 1L]])
+  time_ids <- as.character(fit$time_levels[sample_indices[, 2L]])
+  unit_multiplier <- sum(abs(tapply(operator["dose_lag0", ], unit_ids, sum)))
+  time_multiplier <- sum(abs(tapply(operator["dose_lag0", ], time_ids, sum)))
+
+  unit_row <- bounds_unit$bounds[
+    bounds_unit$bounds$statistic == "coef_dose_lag0" & bounds_unit$bounds$gamma == 0.5,
+    ,
+    drop = FALSE
+  ]
+  time_row <- bounds_time$bounds[
+    bounds_time$bounds$statistic == "coef_dose_lag0" & bounds_time$bounds$gamma == 0.5,
+    ,
+    drop = FALSE
+  ]
+
+  expect_s3_class(bounds_unit, "cdmc_sensitivity_bounds")
+  expect_identical(bounds_unit$perturbation_scope, "unit")
+  expect_equal(unit_row$effective_multiplier, unit_multiplier, tolerance = 1e-8)
+  expect_equal(unit_row$radius, 0.5 * unit_multiplier, tolerance = 1e-8)
+
+  expect_s3_class(bounds_time, "cdmc_sensitivity_bounds")
+  expect_identical(bounds_time$perturbation_scope, "time")
+  expect_equal(time_row$effective_multiplier, time_multiplier, tolerance = 1e-8)
+  expect_equal(time_row$radius, 0.5 * time_multiplier, tolerance = 1e-8)
+})
+
 test_that("formal sensitivity bounds support dose-response predictions", {
   panel <- simulate_cdmc_data(
     n_units = 12,
@@ -1058,6 +1424,329 @@ test_that("formal sensitivity bounds support dose-response predictions", {
 
   expect_s3_class(bounds, "cdmc_sensitivity_bounds")
   expect_equal(response_row$radius, 0.5 * sum(abs(loading_one)), tolerance = 1e-8)
+})
+
+test_that("formal sensitivity bounds reject nonlinear gam dose-response fits", {
+  testthat::skip_if_not_installed("mgcv")
+
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 0.2,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 1941
+  )
+  panel$y <- panel$y + 0.8 * panel$dose^2
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1941
+  )
+  dose_response <- cdmc_dose_response(
+    fit,
+    model = "gam",
+    lag_order = 0,
+    df = 4,
+    include_zero_dose = TRUE
+  )
+
+  expect_error(
+    cdmc_sensitivity_bounds(
+      dose_response,
+      statistics = "prediction",
+      prediction_dose = c(-0.5, 0.5),
+      gamma_grid = c(0, 0.25),
+      scale = "manual",
+      scale_value = 1
+    ),
+    "Use perturbation_layer = 'optimization'"
+  )
+})
+
+test_that("formal sensitivity bounds reject nonlinear tree dose-response fits", {
+  testthat::skip_if_not_installed("rpart")
+
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 0,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 1947
+  )
+  panel$y <- panel$y + ifelse(panel$dose > 0.25, 0.8, 0)
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1947
+  )
+  dose_response <- cdmc_dose_response(
+    fit,
+    model = "tree",
+    lag_order = 0,
+    include_zero_dose = TRUE
+  )
+
+  expect_error(
+    cdmc_sensitivity_bounds(
+      dose_response,
+      statistics = "prediction",
+      prediction_dose = c(0, 0.8),
+      gamma_grid = c(0, 0.25),
+      scale = "manual",
+      scale_value = 1
+    ),
+    "Use perturbation_layer = 'optimization'"
+  )
+})
+
+test_that("formal sensitivity bounds reject nonlinear forest dose-response fits", {
+  testthat::skip_if_not_installed("ranger")
+
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 0,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 1949
+  )
+  panel$y <- panel$y + ifelse(panel$dose > 0.25, 0.8, 0)
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1949
+  )
+  dose_response <- cdmc_dose_response(
+    fit,
+    model = "forest",
+    lag_order = 0,
+    forest_trees = 50,
+    include_zero_dose = TRUE
+  )
+
+  expect_error(
+    cdmc_sensitivity_bounds(
+      dose_response,
+      statistics = "prediction",
+      prediction_dose = c(0, 0.8),
+      gamma_grid = c(0, 0.25),
+      scale = "manual",
+      scale_value = 1
+    ),
+    "Use perturbation_layer = 'optimization'"
+  )
+})
+
+test_that("formal sensitivity bounds support optimization-layer nonlinear dose-response predictions", {
+  model_specs <- list()
+  if (requireNamespace("mgcv", quietly = TRUE)) {
+    model_specs$gam <- list(model = "gam", df = 4)
+  }
+  if (requireNamespace("rpart", quietly = TRUE)) {
+    model_specs$tree <- list(model = "tree")
+  }
+  if (requireNamespace("ranger", quietly = TRUE)) {
+    model_specs$forest <- list(model = "forest", forest_trees = 50)
+  }
+  if (length(model_specs) < 1L) {
+    testthat::skip("requires mgcv, rpart, or ranger")
+  }
+
+  panel <- simulate_cdmc_data(
+    n_units = 5,
+    n_times = 6,
+    rank = 2,
+    beta = 0.2,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.03,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.45,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 2651
+  )
+  panel$y <- panel$y + 0.8 * panel$dose^2
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.15,
+    rank_max = 2,
+    washout = 0,
+    lag_order = 0,
+    seed = 2651
+  )
+  history <- data.frame(dose_lag0 = c(-0.5, 0.5))
+  step <- 1e-3
+
+  for (model_name in names(model_specs)) {
+    args <- c(
+      list(
+        object = fit,
+        lag_order = 0,
+        include_zero_dose = TRUE
+      ),
+      model_specs[[model_name]]
+    )
+    dose_response <- do.call(cdmc_dose_response, args)
+
+    expected <- manual_sensitivity_optimization_radius(
+      dose_response,
+      statistic_name = "dose_response_response_1",
+      step = step,
+      prediction_history = history
+    )
+
+    bounds <- cdmc_sensitivity_bounds(
+      dose_response,
+      statistics = "prediction",
+      prediction_history = history,
+      gamma_grid = c(0, 0.5),
+      perturbation_layer = "optimization",
+      scale = "manual",
+      scale_value = 1,
+      refit_step = step
+    )
+
+    response_row <- bounds$bounds[
+      bounds$bounds$statistic == "dose_response_response_1" & bounds$bounds$gamma == 0.5,
+      ,
+      drop = FALSE
+    ]
+
+    expect_s3_class(bounds, "cdmc_sensitivity_bounds")
+    expect_identical(bounds$perturbation_layer, "optimization")
+    expect_identical(bounds$bound_type, "local_refit")
+    expect_equal(bounds$n_perturbation_cells, expected$n_cells)
+    expect_equal(response_row$radius, 0.5 * expected$multiplier, tolerance = 1e-6)
+  }
+})
+
+test_that("formal sensitivity bounds support optimization-layer dynamic estimands backed by nonlinear dose-response models", {
+  testthat::skip_if_not_installed("mgcv")
+
+  panel <- simulate_cdmc_data(
+    n_units = 5,
+    n_times = 6,
+    rank = 2,
+    beta = 0.2,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.03,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.45,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 2653
+  )
+  panel$y <- panel$y + 0.8 * panel$dose^2
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.15,
+    rank_max = 2,
+    washout = 0,
+    lag_order = 0,
+    seed = 2653
+  )
+  dose_response <- cdmc_dose_response(
+    fit,
+    model = "gam",
+    lag_order = 0,
+    df = 4,
+    include_zero_dose = TRUE
+  )
+  dynamic <- cdmc_dynamic_estimand(
+    dose_response,
+    history = data.frame(dose_lag0 = c(-0.5, 0.5)),
+    type = "response",
+    aggregate = "mean"
+  )
+
+  step <- 1e-3
+  expected <- manual_sensitivity_optimization_radius(
+    dynamic,
+    statistic_name = "mean_dynamic_response",
+    step = step
+  )
+
+  bounds <- cdmc_sensitivity_bounds(
+    dynamic,
+    gamma_grid = c(0, 0.5),
+    perturbation_layer = "optimization",
+    scale = "manual",
+    scale_value = 1,
+    refit_step = step
+  )
+
+  mean_row <- bounds$bounds[
+    bounds$bounds$statistic == "mean_dynamic_response" & bounds$bounds$gamma == 0.5,
+    ,
+    drop = FALSE
+  ]
+
+  expect_s3_class(bounds, "cdmc_sensitivity_bounds")
+  expect_identical(bounds$perturbation_layer, "optimization")
+  expect_identical(bounds$bound_type, "local_refit")
+  expect_equal(bounds$n_perturbation_cells, expected$n_cells)
+  expect_equal(mean_row$radius, 0.5 * expected$multiplier, tolerance = 1e-6)
 })
 
 test_that("formal sensitivity bounds support DR dynamic estimands", {
@@ -1776,7 +2465,7 @@ test_that("formal sensitivity bounds support optimization-layer energy budgets",
   expect_equal(energy_row$radius, 0.25 * energy_multiplier, tolerance = 1e-6)
 })
 
-test_that("formal sensitivity bounds support optimization-layer energy budgets", {
+test_that("formal sensitivity bounds support optimization-layer unit-scope perturbations", {
   panel <- simulate_cdmc_data(
     n_units = 8,
     n_times = 8,
@@ -1832,27 +2521,28 @@ test_that("formal sensitivity bounds support optimization-layer energy budgets",
     derivatives[[index]] <- (refit_statistics[["coef_dose_lag0"]] - base_statistics[["coef_dose_lag0"]]) / step
   }
 
-  energy_multiplier <- sqrt(sum(derivatives ^ 2))
+  unit_ids <- as.character(fit_data[[source_fit$unit]][perturbation_rows])
+  unit_multiplier <- sum(abs(tapply(derivatives, unit_ids, sum)))
 
   bounds <- cdmc_sensitivity_bounds(
     fit,
     statistics = "coefficients",
     gamma_grid = 0.25,
-    perturbation_constraint = "energy",
+    perturbation_scope = "unit",
     perturbation_layer = "optimization",
     scale = "manual",
     scale_value = 1,
     refit_step = step
   )
 
-  energy_row <- bounds$bounds[
+  unit_row <- bounds$bounds[
     bounds$bounds$statistic == "coef_dose_lag0" & bounds$bounds$gamma == 0.25,
     ,
     drop = FALSE
   ]
 
   expect_s3_class(bounds, "cdmc_sensitivity_bounds")
-  expect_identical(bounds$perturbation_constraint, "energy")
-  expect_equal(energy_row$effective_multiplier, energy_multiplier, tolerance = 1e-6)
-  expect_equal(energy_row$radius, 0.25 * energy_multiplier, tolerance = 1e-6)
+  expect_identical(bounds$perturbation_scope, "unit")
+  expect_equal(unit_row$effective_multiplier, unit_multiplier, tolerance = 1e-6)
+  expect_equal(unit_row$radius, 0.25 * unit_multiplier, tolerance = 1e-6)
 })

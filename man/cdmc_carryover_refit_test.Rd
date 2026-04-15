@@ -7,7 +7,7 @@ Hold out selected post-exit zero-dose periods, refit the main baseline objective
 and summarize the resulting pseudo effects on the held-out exit cells.
 }
 \usage{
-cdmc_carryover_refit_test(object, periods = 1L, verbose = FALSE)
+cdmc_carryover_refit_test(object, periods = 1L, rerun_tuning = FALSE, verbose = FALSE)
 
 \method{print}{cdmc_carryover_refit_test}(x, ...)
 }
@@ -17,6 +17,12 @@ cdmc_carryover_refit_test(object, periods = 1L, verbose = FALSE)
   \item{periods}{One or more positive integers identifying zero-dose periods after
   treatment exits. For example, \code{periods = 1:2} tests the first and second
   zero-dose periods after the most recent nonzero dose.}
+
+  \item{rerun_tuning}{Logical indicating whether the diagnostic refit should
+  rerun the source fit's automatic lambda-selection rule on the trimmed support
+  mask. This requires the source \code{cdmc_fit} object to have been created
+  with \code{lambda = NULL}; fixed-lambda source fits must use the default
+  \code{FALSE}.}
 
   \item{verbose}{Logical flag controlling progress messages during the diagnostic
   refit.}
@@ -32,8 +38,10 @@ removed from the baseline objective, and the refitted baseline surface is used
 to compute pseudo effects on the held-out exit periods.
 
 This is more aligned with the diagnostic logic discussed in the project roadmap
-than the residual-only carryover screen, though it still reuses the original
-lambda value instead of rerunning tuning inside the diagnostic refit.
+than the residual-only carryover screen. By default, the refit reuses the
+original selected lambda. When \code{rerun_tuning = TRUE}, the refit instead
+reruns the stored automatic heuristic or blocked cross-validation lambda-
+selection rule on the trimmed support mask before rebuilding the baseline.
 
 The resulting object can be supplied directly to \code{cdmc_bootstrap()} to
 obtain percentile intervals for the mean refit carryover pseudo effect.
@@ -53,13 +61,13 @@ fit <- cdmc_fit(
   unit = "unit",
   time = "time",
   covariates = "x1",
-  lambda = 0.2,
+  lambda = NULL,
   rank_max = 3,
   lag_order = 1,
   seed = 1
 )
 
-cdmc_carryover_refit_test(fit, periods = 1)
+cdmc_carryover_refit_test(fit, periods = 1, rerun_tuning = TRUE)
 }
 }
 \seealso{

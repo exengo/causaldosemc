@@ -32,6 +32,50 @@ test_that("SCIA screen returns a diagnostic object on standard fits", {
   expect_equal(diagnostic$lags, 1)
   expect_true(diagnostic$sample_size > 0)
   expect_true("tau_lag1" %in% diagnostic$screen_table$term)
+  expect_true(is.data.frame(diagnostic$conditioning_table))
+  expect_true(is.data.frame(diagnostic$restriction_table))
+  expect_true(all(c("restriction_name", "adjusted_p_value", "passed") %in% names(diagnostic$restriction_table)))
+})
+
+test_that("SCIA screen reports named restriction blocks", {
+  panel <- simulate_cdmc_data(
+    n_units = 16,
+    n_times = 10,
+    rank = 2,
+    beta = 0.9,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 7172
+  )
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 1,
+    seed = 7172
+  )
+
+  diagnostic <- cdmc_scia_test(
+    fit,
+    lags = 2,
+    outcome_proxy = "tau",
+    restriction_blocks = list(recent_history = 1, deeper_history = 2)
+  )
+
+  expect_s3_class(diagnostic, "cdmc_scia_test")
+  expect_identical(names(diagnostic$restriction_blocks), c("recent_history", "deeper_history"))
+  expect_identical(diagnostic$restriction_table$restriction_name, c("recent_history", "deeper_history"))
+  expect_true(all(is.finite(diagnostic$restriction_table$adjusted_p_value) | is.na(diagnostic$restriction_table$adjusted_p_value)))
 })
 
 test_that("SCIA screen detects lagged outcome driven treatment assignment", {
@@ -82,9 +126,18 @@ test_that("SCIA screen detects lagged outcome driven treatment assignment", {
     seed = 7272
   )
 
-  diagnostic <- cdmc_scia_test(fit, lags = 1, outcome_proxy = "y")
+  diagnostic <- cdmc_scia_test(
+    fit,
+    lags = 1,
+    outcome_proxy = "y",
+    restriction_blocks = list(recent_history = 1)
+  )
 
   expect_s3_class(diagnostic, "cdmc_scia_test")
   expect_true(is.finite(diagnostic$p_value))
   expect_true(diagnostic$p_value < 0.05)
+  expect_identical(diagnostic$restriction_table$restriction_name, "recent_history")
+  expect_true(diagnostic$restriction_table$adjusted_p_value[[1]] < 0.05)
+  expect_true("recent_history" %in% diagnostic$failed_restrictions)
+  expect_false(diagnostic$passed)
 })

@@ -2,19 +2,17 @@ Package: causaldosemc
 Title: Matrix Completion for Continuous Treatment Panels
 Version: 0.1.0
 Authors@R:
-    person(given = "Research",
-           family = "Team",
+    person(given = "Mikael",
+           family = "Eriksson",
            role = c("aut", "cre"),
-           email = "research@example.org")
-Description: Research-use tools for estimating baseline counterfactual outcomes
-    in balanced panel data with reversible continuous treatment and zero as the
-    control state. The package combines zero-dose masking, washout handling,
-    low-rank matrix completion, optional observation weighting, diagnostics,
-    bootstrap inference, a cross-fitted doubly robust-style linear effect
-    layer with internal Gaussian or kernel GPS weighting, optional CBPS-based
-    balancing weights, flexible linear, spline, GAM, tree, or forest-based
-    assignment mean models, a SCIA-oriented assignment diagnostic, and linear
-    or spline-based second-stage dose-response modeling.
+           email = "mikael.eriksson@exi.app")
+Description: Experimental tools for matrix-completion-based causal estimation
+    in panel data with reversible continuous treatment and zero as the control
+    state. The package combines zero-dose masking, washout handling, low-rank
+    matrix completion, optional observation weighting, diagnostics, bootstrap
+    inference, a cross-fitted doubly robust effect layer with internal GPS or
+    balancing-based weighting, and post-fit dose-response modeling for
+    empirical and methodological workflows.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
@@ -23,8 +21,12 @@ Imports:
     stats
 Suggests:
     CBPS,
+    gbm,
+    knitr,
     mgcv,
     ranger,
+    rmarkdown,
     rpart,
     testthat (>= 3.0.0)
+VignetteBuilder: knitr
 Config/testthat/edition: 3

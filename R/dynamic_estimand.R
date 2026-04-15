@@ -25,9 +25,7 @@ cdmc_dynamic_lag_names <- function(object) {
 }
 
 cdmc_dynamic_history_template <- function(lag_names, n_rows = 1L) {
-  history <- as.data.frame(matrix(0, nrow = n_rows, ncol = length(lag_names)))
-  names(history) <- lag_names
-  history
+  cdmc_named_numeric_data_frame(lag_names, n_rows = n_rows)
 }
 
 cdmc_resolve_dynamic_history <- function(history, lag_names, argument_name = "history") {

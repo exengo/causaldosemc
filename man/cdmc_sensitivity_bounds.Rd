@@ -18,6 +18,7 @@ cdmc_sensitivity_bounds(
   gamma_grid = c(0, 0.25, 0.5, 1),
   contamination_fraction_grid = 1,
   perturbation_constraint = c("cellwise", "energy"),
+  perturbation_scope = c("cell", "unit", "time"),
   perturbation_layer = c("stage2", "baseline", "optimization"),
   scale = c("residual_sd", "response_sd", "manual"),
   scale_value = NULL,
@@ -58,6 +59,13 @@ cdmc_sensitivity_bounds(
   energy of the perturbation over the contaminated cells and produces
   \eqn{\ell_2}-loading radii.}
 
+  \item{perturbation_scope}{Which grouped sample elements the adversary may
+  perturb. \code{"cell"} treats each unit-time cell separately. \code{"unit"}
+  aggregates the loading vector within unit before applying the chosen dense or
+  sparse perturbation budget, so the perturbation is interpreted as a
+  unit-level shock. \code{"time"} analogously aggregates within time period and
+  reports period-level shocks.}
+
   \item{perturbation_layer}{Which stored post-fit layer is perturbed.
   \code{"stage2"} perturbs the stage-2 response or pseudo-outcome sample used
   by the stored linear map. \code{"baseline"} perturbs the underlying
@@ -69,7 +77,12 @@ cdmc_sensitivity_bounds(
   regression. \code{"optimization"} perturbs the source optimization sample
   itself and recomputes the downstream summary through a local numerical refit
   Jacobian. This layer is currently available only for targets backed by
-  \code{cdmc_fit()} or \code{cdmc_dr_fit()}.}
+  \code{cdmc_fit()} or \code{cdmc_dr_fit()}, including post-fit
+  \code{cdmc_dose_response()} objects and compatible
+  \code{cdmc_dynamic_estimand()} targets that can be rebuilt from those source
+  fits. For nonlinear post-fit dose-response models such as \code{"gam"},
+  \code{"tree"}, and \code{"forest"}, this is the supported formal
+  sensitivity layer.}
 
   \item{scale}{How to calibrate \code{scale_value}. \code{"residual_sd"}
   uses the standard deviation of the relevant residual sample for the chosen
@@ -136,6 +149,12 @@ using either the corresponding \eqn{\ell_1} or \eqn{\ell_2} geometry implied by
 \code{perturbation_constraint}. \code{contamination_fraction_grid = 1}
 recovers the original dense worst-case model exactly.
 
+When \code{perturbation_scope = "unit"} or \code{"time"}, the helper first
+aggregates the loading vector within each unit or period and then applies the
+chosen dense or sparse cellwise or energy budget to those grouped loadings.
+This lets the same formal bound machinery represent coherent unit-level or
+period-level perturbations instead of purely cell-level shocks.
+
 With \code{perturbation_layer = "stage2"}, the perturbed sample is the stored
 stage-2 response or pseudo-outcome layer. With
 \code{perturbation_layer = "baseline"}, the perturbed sample is the stored
@@ -162,17 +181,18 @@ and \code{cdmc_dr_fit()}-backed targets through a local refit approximation.
 The remaining limitations are broader identification-robust sensitivity models.
 
 The output includes both the reference estimate table and a grid-expanded bound
-table. The reference table reports the sensitivity multiplier \eqn{\|h\|_1}
-for each statistic together with the breakdown value at which the bounded-bias
-interval first covers the requested null.
+table. The reference table reports the effective sensitivity multiplier under
+the chosen perturbation constraint and scope for each statistic together with
+the breakdown value at which the bounded-bias interval first covers the
+requested null.
 }
 \value{
 An object of class \code{cdmc_sensitivity_bounds} containing:
 
 \item{reference}{A data frame with one row per reported statistic, including
-the point estimate, null value, perturbation layer, basis label,
-sensitivity multiplier,
-the resolved scale information, and the breakdown bias bound or breakdown
+the point estimate, null value, perturbation layer, perturbation constraint,
+perturbation scope, basis label, effective sensitivity multiplier, the
+resolved scale information, and the breakdown bias bound or breakdown
 \code{gamma}.}
 
 \item{bounds}{A data frame with one row per statistic, contamination fraction,
@@ -216,6 +236,14 @@ bounds <- cdmc_sensitivity_bounds(
 )
 
 summary(bounds)
+
+summary(cdmc_sensitivity_bounds(
+  fit,
+  statistics = "coefficients",
+  perturbation_scope = "unit",
+  scale = "manual",
+  scale_value = 1
+))
 
 joint_fit <- cdmc_fit(
   data = panel,

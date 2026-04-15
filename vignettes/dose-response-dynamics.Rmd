@@ -1,0 +1,145 @@
+---
+title: "Dose-Response and Dynamic Estimands"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Dose-Response and Dynamic Estimands}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(causaldosemc)
+options(width = 100)
+```
+
+This vignette covers post-fit continuous dose-response estimation, prediction,
+dynamic/pathwise summaries, simultaneous bootstrap bands, and bounded-bias
+sensitivity analysis for downstream targets.
+
+## Fit a parent baseline model
+
+```{r}
+panel <- simulate_cdmc_data(
+  n_units = 16,
+  n_times = 10,
+  beta = 0.9,
+  lag_beta = 0.3,
+  noise_sd = 0.05,
+  switch_on_prob = 0.17,
+  switch_off_prob = 0.42,
+  seed = 404
+)
+
+fit <- cdmc_fit(
+  data = panel,
+  outcome = "y",
+  dose = "dose",
+  unit = "unit",
+  time = "time",
+  covariates = "x1",
+  lambda = 0.18,
+  washout = 1,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 404
+)
+
+fit
+```
+
+## Fit a post-baseline dose-response model
+
+```{r}
+dose_response <- cdmc_dose_response(
+  fit,
+  model = "spline",
+  lag_order = 1,
+  df = 4
+)
+
+predict(dose_response, dose = seq(-1, 1, length.out = 5), type = "response")
+```
+
+For explicit histories, supply `dose_lag0`, `dose_lag1`, and any additional lag
+columns up to the fitted order.
+
+```{r}
+history_grid <- data.frame(
+  dose_lag0 = c(0, 0.5, 1),
+  dose_lag1 = c(0, 0.25, 0.5)
+)
+
+predict(dose_response, history = history_grid, type = "response")
+predict(dose_response, history = history_grid, type = "slope")
+```
+
+If `mgcv` is installed, a nonlinear GAM dose-response can be fit the same way.
+
+```{r}
+if (requireNamespace("mgcv", quietly = TRUE)) {
+  dose_response_gam <- cdmc_dose_response(
+    fit,
+    model = "gam",
+    lag_order = 1,
+    df = 4
+  )
+
+  predict(dose_response_gam, history = history_grid, type = "response")
+}
+```
+
+## Evaluate dynamic pathwise effects
+
+```{r}
+dynamic_paths <- cdmc_dynamic_estimand(
+  dose_response,
+  history = data.frame(
+    dose_lag0 = c(1, 0.5),
+    dose_lag1 = c(0.5, 1)
+  ),
+  reference_history = data.frame(
+    dose_lag0 = c(0, 0),
+    dose_lag1 = c(0, 0)
+  ),
+  type = "contrast",
+  aggregate = "both",
+  labels = c("front_loaded", "back_loaded")
+)
+
+dynamic_paths
+dynamic_paths$estimate_table
+```
+
+## Bootstrap path summaries with simultaneous bands
+
+```{r}
+dynamic_boot <- cdmc_bootstrap(
+  dynamic_paths,
+  n_boot = 10,
+  statistics = "estimate",
+  simultaneous = TRUE,
+  seed = 404
+)
+
+dynamic_boot$summary
+```
+
+## Add bounded-bias sensitivity summaries for predictions
+
+```{r}
+prediction_bounds <- cdmc_sensitivity_bounds(
+  dose_response,
+  statistics = "prediction",
+  prediction_history = history_grid,
+  prediction_type = "response",
+  gamma_grid = c(0, 0.25, 0.5)
+)
+
+summary(prediction_bounds)
+```
+
+Linear and spline post-fit dose-response models support the exact stored-map
+bounded-bias layer shown above. For nonlinear GAM, tree, or forest post-fit
+models, use `perturbation_layer = "optimization"` to switch to the local refit
+sensitivity layer.

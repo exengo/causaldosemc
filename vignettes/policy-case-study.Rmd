@@ -1,0 +1,301 @@
+---
+title: "Manuscript-Style Case Study: Reversible Rebate Intensity"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Manuscript-Style Case Study: Reversible Rebate Intensity}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(causaldosemc)
+options(width = 100)
+```
+
+This vignette is structured like a compact empirical-paper workflow. The data
+are still simulated, but the analysis is written as a single coherent
+application rather than a feature-by-feature walkthrough.
+
+The running example treats the continuous, reversible treatment as monthly
+rebate intensity across stores. Stores can turn the rebate on and off over
+time, rebate intensity varies continuously when active, and effects may persist
+for one month after the current rebate choice.
+
+## Build a store-month analysis panel
+
+The starting point is the package simulator, followed by a simple remapping of
+the active treatment periods onto a positive rebate-intensity scale. The
+outcome is then adjusted so the modified current and lagged rebate levels are
+reflected in the observed sales index.
+
+```{r}
+panel <- simulate_cdmc_data(
+  n_units = 24,
+  n_times = 12,
+  beta = 0.7,
+  lag_beta = 0.25,
+  noise_sd = 0.05,
+  switch_on_prob = 0.14,
+  switch_off_prob = 0.55,
+  seed = 505
+)
+
+panel <- panel[order(panel$unit, panel$time), ]
+original_dose <- panel$dose
+active <- abs(original_dose) > 0
+
+panel$dose[active] <- 0.15 +
+  0.55 * plogis(panel$x1[active]) +
+  0.25 * panel$time[active] / max(panel$time)
+
+lag_original <- ave(original_dose, panel$unit, FUN = function(x) c(0, head(x, -1)))
+lag_updated <- ave(panel$dose, panel$unit, FUN = function(x) c(0, head(x, -1)))
+
+panel$y <- panel$y +
+  0.7 * (panel$dose - original_dose) +
+  0.25 * (lag_updated - lag_original)
+
+case_panel <- data.frame(
+  store = panel$unit,
+  month = panel$time,
+  sales_index = panel$y,
+  rebate_intensity = panel$dose,
+  demand_proxy = panel$x1
+)
+
+head(case_panel)
+```
+
+In an empirical application, `sales_index` would be the observed outcome,
+`rebate_intensity` would be the store-level treatment intensity, and
+`demand_proxy` would stand in for observed demand conditions or local market
+controls.
+
+## Fit the primary matrix-completion model
+
+The primary specification uses the staged estimator with blocked
+cross-validation, one post-treatment washout period, and a one-lag treatment
+effect layer.
+
+```{r}
+case_fit <- cdmc_fit(
+  data = case_panel,
+  outcome = "sales_index",
+  dose = "rebate_intensity",
+  unit = "store",
+  time = "month",
+  covariates = "demand_proxy",
+  lambda = NULL,
+  lambda_selection = "cv",
+  cv_rounds = 3L,
+  cv_block_size = 2L,
+  washout = 1,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 505
+)
+
+case_fit
+summary(case_fit)
+```
+
+This is the baseline empirical specification that the rest of the case study
+will stress-test.
+
+## Diagnostic checks before interpretation
+
+The first checks are the repeated placebo refit, the carryover refit, and the
+SCIA-style dynamic assignment screen.
+
+```{r}
+case_placebo <- cdmc_joint_placebo_test(
+  case_fit,
+  placebo_windows = list(
+    distant_window = -3:-2,
+    immediate_window = -1
+  ),
+  rerun_tuning = TRUE
+)
+
+case_carryover <- cdmc_carryover_refit_test(
+  case_fit,
+  periods = 1:2,
+  rerun_tuning = TRUE
+)
+
+case_scia <- cdmc_scia_test(
+  case_fit,
+  lags = 2,
+  outcome_proxy = "tau",
+  restriction_blocks = list(
+    recent_history = 1,
+    deeper_history = 2
+  )
+)
+
+case_placebo
+case_carryover
+case_scia
+```
+
+This is the point in the workflow where an empirical article would decide
+whether the baseline identifying story remains plausible enough to move on to
+substantive interpretation.
+
+## Add a weighting-oriented robustness fit
+
+Next, the same store-month panel is reweighted with entropy balancing and then
+run through the DR layer. This produces a fold-cross-fitted weighted robustness
+check using the same treatment and lag structure as the primary analysis.
+
+```{r}
+rebate_weights <- cdmc_entropy_balance_weights(
+  case_panel,
+  dose = "rebate_intensity",
+  covariates = "demand_proxy",
+  time = "month",
+  time_effects = TRUE
+)
+
+case_dr <- cdmc_dr_fit(
+  data = case_panel,
+  outcome = "sales_index",
+  dose = "rebate_intensity",
+  unit = "store",
+  time = "month",
+  covariates = "demand_proxy",
+  weights = rebate_weights,
+  n_folds = 2L,
+  lambda = case_fit$lambda,
+  washout = 1,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 505
+)
+
+case_dr
+```
+
+In an article, the point of this section is not to replace the primary fit.
+It is to show whether the substantive result looks sensitive to a weighting
+design that targets observed dose-covariate balance more aggressively.
+
+## Fit a flexible post-baseline dose-response layer
+
+The main fit anchors the untreated baseline. A flexible response surface can
+then be estimated downstream without changing that stage-1 baseline contract.
+
+```{r}
+case_curve <- cdmc_dose_response(
+  case_fit,
+  model = "spline",
+  lag_order = 1,
+  df = 4
+)
+
+predict(
+  case_curve,
+  dose = seq(0, 1, length.out = 5),
+  type = "response"
+)
+```
+
+## Turn the fitted curve into article-style path contrasts
+
+Two rebate policies are compared against the all-zero path:
+
+- a one-month pulse rebate with high contemporaneous intensity and no lagged
+  rebate
+- a sustained two-month rebate with moderate intensity in both months
+
+```{r}
+case_paths <- cdmc_dynamic_estimand(
+  case_curve,
+  history = data.frame(
+    dose_lag0 = c(0.9, 0.6),
+    dose_lag1 = c(0.0, 0.6)
+  ),
+  reference_history = data.frame(
+    dose_lag0 = c(0, 0),
+    dose_lag1 = c(0, 0)
+  ),
+  type = "contrast",
+  aggregate = "both",
+  labels = c("pulse_rebate", "sustained_rebate")
+)
+
+case_paths
+case_paths$estimate_table
+```
+
+## Bootstrap the path contrasts
+
+The pathwise contrast object is bootstrapable directly, which keeps the paper's
+reported uncertainty tied to the exact path definitions used in the text.
+
+```{r}
+case_boot <- cdmc_bootstrap(
+  case_paths,
+  n_boot = 10,
+  statistics = "estimate",
+  simultaneous = TRUE,
+  seed = 505
+)
+
+case_boot$summary
+```
+
+For a real paper, increase `n_boot` materially beyond the vignette setting.
+
+## Replay washout and weighting sensitivity
+
+The replay-based sensitivity layer is useful for checking whether the primary
+result depends sharply on one washout choice or on one weighting decision.
+
+```{r}
+case_scan <- cdmc_sensitivity_scan(
+  case_fit,
+  washout_grid = 0:2,
+  weight_specs = list(entropy_reweight = rebate_weights),
+  rerun_tuning = TRUE
+)
+
+case_scan$support_summary
+case_scan$weight_summary
+```
+
+## Add formal bounded-bias sensitivity bounds
+
+The bounded-bias layer then asks how large an additive hidden-bias perturbation
+would need to be before the main fit's reported summaries lose their sign or
+their separation from a chosen null.
+
+```{r}
+case_bounds <- cdmc_sensitivity_bounds(
+  case_fit,
+  statistics = c("coefficients", "average_tau"),
+  gamma_grid = c(0, 0.25, 0.5),
+  perturbation_layer = "stage2",
+  scale = "residual_sd"
+)
+
+summary(case_bounds)
+```
+
+## What this case study contributes
+
+This vignette is meant to mirror how an empirical paper would actually use the
+package:
+
+1. estimate a primary staged matrix-completion model with blocked-CV tuning,
+2. run placebo, carryover, and SCIA diagnostics before interpretation,
+3. add a weighted DR robustness fit,
+4. translate the fitted response surface into policy-relevant dynamic path
+   contrasts,
+5. bootstrap those reported contrasts, and
+6. report both replay-based and bounded-bias sensitivity summaries.
+
+The remaining gap between this workflow and a journal-ready application is now
+mostly about real data, empirical reporting choices, and additional substantive
+design justification, not about missing package plumbing.

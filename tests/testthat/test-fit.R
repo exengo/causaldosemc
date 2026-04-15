@@ -234,3 +234,39 @@ test_that("core estimator supports spline second-stage effects", {
   expect_equal(fitted_effect$estimate, fit$data$.cdmc_tau_model)
   expect_true(mean(active$estimate[active$dose > dose_split]) > mean(active$estimate[active$dose <= dose_split]))
 })
+
+test_that("fit print methods flag heuristic lambda as an empirical fallback", {
+  panel <- simulate_cdmc_data(
+    n_units = 8,
+    n_times = 8,
+    rank = 2,
+    beta = 0.9,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 5353
+  )
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = NULL,
+    rank_max = 2,
+    washout = 0,
+    lag_order = 0,
+    seed = 5353
+  )
+
+  print_output <- paste(capture.output(print(fit)), collapse = "\n")
+  summary_output <- paste(capture.output(summary(fit)), collapse = "\n")
+
+  expect_match(print_output, 'lambda selection: heuristic', fixed = TRUE)
+  expect_match(print_output, 'empirical workflows should prefer lambda_selection = "cv"', fixed = TRUE)
+  expect_match(summary_output, 'empirical workflows should prefer lambda_selection = "cv"', fixed = TRUE)
+})

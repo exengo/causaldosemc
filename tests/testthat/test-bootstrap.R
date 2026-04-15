@@ -304,6 +304,173 @@ test_that("bootstrap supports dose-response fits and prediction functionals", {
   expect_true(boot$n_failures <= boot$n_boot)
 })
 
+test_that("bootstrap supports gam dose-response fits and prediction functionals", {
+  testthat::skip_if_not_installed("mgcv")
+
+  panel <- simulate_cdmc_data(
+    n_units = 10,
+    n_times = 10,
+    rank = 2,
+    beta = 0.2,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 7181
+  )
+  panel$y <- panel$y + 0.8 * panel$dose^2
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 7181
+  )
+  dr <- cdmc_dose_response(
+    fit,
+    model = "gam",
+    lag_order = 0,
+    df = 4,
+    include_zero_dose = TRUE
+  )
+
+  boot <- cdmc_bootstrap(
+    dr,
+    n_boot = 2,
+    statistics = c("coefficients", "prediction"),
+    prediction_dose = c(-0.5, 0.5),
+    prediction_type = "response",
+    seed = 7181
+  )
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_true(any(startsWith(colnames(boot$draws), "coef_")))
+  expect_true(all(c("dose_response_response_1", "dose_response_response_2") %in% colnames(boot$draws)))
+  expect_true(all(c("dose_response_response_1", "dose_response_response_2") %in% boot$summary$statistic))
+  expect_true(boot$n_failures <= boot$n_boot)
+})
+
+test_that("bootstrap supports tree dose-response fits and prediction functionals", {
+  testthat::skip_if_not_installed("rpart")
+
+  panel <- simulate_cdmc_data(
+    n_units = 10,
+    n_times = 10,
+    rank = 2,
+    beta = 0,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 7187
+  )
+  panel$y <- panel$y + ifelse(panel$dose > 0.25, 0.8, 0)
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 7187
+  )
+  dr <- cdmc_dose_response(
+    fit,
+    model = "tree",
+    lag_order = 0,
+    include_zero_dose = TRUE
+  )
+
+  boot <- cdmc_bootstrap(
+    dr,
+    n_boot = 2,
+    statistics = c("coefficients", "prediction"),
+    prediction_dose = c(0, 0.8),
+    prediction_type = "response",
+    seed = 7187
+  )
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_true("coef_dose_lag0" %in% colnames(boot$draws))
+  expect_true(all(c("dose_response_response_1", "dose_response_response_2") %in% colnames(boot$draws)))
+  expect_true(all(c("dose_response_response_1", "dose_response_response_2") %in% boot$summary$statistic))
+  expect_true(boot$n_failures <= boot$n_boot)
+})
+
+test_that("bootstrap supports forest dose-response fits and prediction functionals", {
+  testthat::skip_if_not_installed("ranger")
+
+  panel <- simulate_cdmc_data(
+    n_units = 10,
+    n_times = 10,
+    rank = 2,
+    beta = 0,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 7189
+  )
+  panel$y <- panel$y + ifelse(panel$dose > 0.25, 0.8, 0)
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 7189
+  )
+  dr <- cdmc_dose_response(
+    fit,
+    model = "forest",
+    lag_order = 0,
+    forest_trees = 50,
+    include_zero_dose = TRUE
+  )
+
+  boot <- cdmc_bootstrap(
+    dr,
+    n_boot = 2,
+    statistics = c("coefficients", "prediction"),
+    prediction_dose = c(0, 0.8),
+    prediction_type = "response",
+    seed = 7189
+  )
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_true("coef_dose_lag0" %in% colnames(boot$draws))
+  expect_true(all(c("dose_response_response_1", "dose_response_response_2") %in% colnames(boot$draws)))
+  expect_true(all(c("dose_response_response_1", "dose_response_response_2") %in% boot$summary$statistic))
+  expect_true(boot$n_failures <= boot$n_boot)
+})
+
 test_that("bootstrap supports DR fits with internal gaussian GPS weights", {
   panel <- simulate_cdmc_data(
     n_units = 8,
@@ -574,6 +741,119 @@ test_that("bootstrap supports DR fits with internal forest Gaussian GPS weights"
   expect_true(boot$n_failures <= boot$n_boot)
 })
 
+test_that("bootstrap supports DR fits with stacked Gaussian GPS weights", {
+  testthat::skip_if_not_installed("rpart")
+
+  panel <- simulate_cdmc_data(
+    n_units = 8,
+    n_times = 8,
+    rank = 2,
+    beta = 0.55,
+    lag_beta = NULL,
+    n_covariates = 2,
+    noise_sd = 0.05,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 4337
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  interaction_score <- panel$x2 + panel$time / max(panel$time)
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.15 + panel$x1[active]^2 + ifelse(interaction_score[active] > stats::median(interaction_score), 0.5, -0.2)
+  )
+  panel$y <- panel$y + 0.55 * (panel$dose - original_dose)
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = c("x1", "x2"),
+    weight_method = "gaussian_gps",
+    gps_model = "stack",
+    gps_stack_models = c("linear", "spline", "tree"),
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 4337
+  )
+
+  boot <- cdmc_bootstrap(
+    fit,
+    n_boot = 2,
+    statistics = c("coefficients", "average_tau_dr"),
+    seed = 4337
+  )
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_identical(fit$gps_model, "stack")
+  expect_identical(fit$gps_stack_models, c("linear", "spline", "tree"))
+  expect_true(all(c("coef_dose_lag0", "mean_tau_dr") %in% colnames(boot$draws)))
+  expect_true(boot$n_failures <= boot$n_boot)
+})
+
+test_that("bootstrap supports DR fits with boosted Gaussian GPS weights", {
+  testthat::skip_if_not_installed("gbm")
+
+  panel <- simulate_cdmc_data(
+    n_units = 8,
+    n_times = 8,
+    rank = 2,
+    beta = 0.55,
+    lag_beta = NULL,
+    n_covariates = 2,
+    noise_sd = 0.05,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 4341
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  interaction_score <- panel$x2 + panel$time / max(panel$time)
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.1 + panel$x1[active]^2 + 0.4 * interaction_score[active]
+  )
+  panel$y <- panel$y + 0.55 * (panel$dose - original_dose)
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = c("x1", "x2"),
+    weight_method = "gaussian_gps",
+    gps_model = "boost",
+    gps_boost_trees = 40L,
+    gps_boost_depth = 2L,
+    gps_boost_shrinkage = 0.05,
+    gps_boost_min_obs_node = 3L,
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 4341
+  )
+
+  boot <- cdmc_bootstrap(
+    fit,
+    n_boot = 2,
+    statistics = c("coefficients", "average_tau_dr"),
+    seed = 4341
+  )
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_identical(fit$gps_model, "boost")
+  expect_identical(fit$gps_boost_trees, 40L)
+  expect_true(all(c("coef_dose_lag0", "mean_tau_dr") %in% colnames(boot$draws)))
+  expect_true(boot$n_failures <= boot$n_boot)
+})
+
 test_that("bootstrap supports DR fits with internal kernel GPS weights", {
   panel <- simulate_cdmc_data(
     n_units = 8,
@@ -663,6 +943,154 @@ test_that("bootstrap supports DR fits with internal CBPS weights", {
     n_boot = 2,
     statistics = c("coefficients", "average_tau_dr"),
     seed = 4494
+  )
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_true(all(c("coef_dose_lag0", "mean_tau_dr") %in% colnames(boot$draws)))
+  expect_true(boot$n_failures <= boot$n_boot)
+})
+
+test_that("bootstrap supports DR fits with internal entropy-balance weights", {
+  panel <- simulate_cdmc_data(
+    n_units = 10,
+    n_times = 8,
+    rank = 2,
+    beta = 0.75,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 4498
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.15 + panel$x1[active]^2 + ifelse(panel$time[active] > stats::median(panel$time), 0.5, -0.1)
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "entropy_balance",
+    entropy_balance_iterations = 500L,
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 4498
+  )
+
+  boot <- cdmc_bootstrap(
+    fit,
+    n_boot = 2,
+    statistics = c("coefficients", "average_tau_dr"),
+    seed = 4498
+  )
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_true(all(c("coef_dose_lag0", "mean_tau_dr") %in% colnames(boot$draws)))
+  expect_true(boot$n_failures <= boot$n_boot)
+})
+
+test_that("bootstrap supports DR fits with internal kernel-balance weights", {
+  panel <- simulate_cdmc_data(
+    n_units = 10,
+    n_times = 8,
+    rank = 2,
+    beta = 0.75,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 4502
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.2 + sin(panel$x1[active]) + ifelse(panel$time[active] > stats::median(panel$time), 0.4, -0.1)
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "kernel_balance",
+    kernel_balance_centers = 6L,
+    kernel_balance_iterations = 400L,
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 4502
+  )
+
+  boot <- cdmc_bootstrap(
+    fit,
+    n_boot = 2,
+    statistics = c("coefficients", "average_tau_dr"),
+    seed = 4502
+  )
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_true(all(c("coef_dose_lag0", "mean_tau_dr") %in% colnames(boot$draws)))
+  expect_true(boot$n_failures <= boot$n_boot)
+})
+
+test_that("bootstrap supports DR fits with internal adaptive-balance weights", {
+  panel <- simulate_cdmc_data(
+    n_units = 20,
+    n_times = 10,
+    rank = 2,
+    beta = 0.75,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.12,
+    switch_off_prob = 0.5,
+    seed = 4512
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.25 + sin(panel$x1[active]) + ifelse(panel$time[active] > stats::median(panel$time), 0.4, -0.1)
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "adaptive_balance",
+    adaptive_balance_methods = c("entropy_balance", "kernel_balance"),
+    kernel_balance_centers = 6L,
+    entropy_balance_iterations = 400L,
+    kernel_balance_iterations = 400L,
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 4512
+  )
+
+  boot <- cdmc_bootstrap(
+    fit,
+    n_boot = 2,
+    statistics = c("coefficients", "average_tau_dr"),
+    seed = 4512
   )
 
   expect_s3_class(boot, "cdmc_bootstrap")
@@ -839,6 +1267,43 @@ test_that("bootstrap supports refit carryover diagnostics", {
   expect_true("mean_refit_carryover_tau" %in% boot$summary$statistic)
 })
 
+test_that("bootstrap preserves rerun_tuning for placebo refit diagnostics", {
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 1,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.03,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 7171
+  )
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = NULL,
+    rank_max = 3,
+    washout = 1,
+    lag_order = 1,
+    seed = 7171
+  )
+  placebo <- cdmc_placebo_test(fit, periods = -2:0, rerun_tuning = TRUE)
+
+  boot <- cdmc_bootstrap(placebo, n_boot = 2, seed = 7171)
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_identical(boot$lambda_method, "heuristic")
+  expect_true(boot$rerun_tuning)
+  expect_true("mean_placebo_tau" %in% colnames(boot$draws))
+})
+
 test_that("bootstrap supports residual carryover diagnostics", {
   panel <- simulate_cdmc_data(
     n_units = 10,
@@ -919,6 +1384,53 @@ test_that("bootstrap supports joint placebo diagnostics", {
   ) %in% boot$summary$statistic))
 })
 
+test_that("bootstrap preserves named repeated placebo windows", {
+  panel <- simulate_cdmc_data(
+    n_units = 10,
+    n_times = 12,
+    rank = 2,
+    beta = 1,
+    lag_beta = 0.15,
+    n_covariates = 1,
+    noise_sd = 0.02,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 9091
+  )
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 1,
+    lag_order = 1,
+    seed = 9091
+  )
+  joint <- cdmc_joint_placebo_test(
+    fit,
+    placebo_windows = list(early_window = -3:-2, immediate_window = -1)
+  )
+
+  boot <- cdmc_bootstrap(joint, n_boot = 2, statistics = c("window_mean_tau", "joint_p_value"), seed = 9091)
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_true(all(c(
+    "joint_placebo_mean_tau_window_early_window",
+    "joint_placebo_mean_tau_window_immediate_window",
+    "joint_placebo_p_value"
+  ) %in% colnames(boot$draws)))
+  expect_true(all(c(
+    "joint_placebo_mean_tau_window_early_window",
+    "joint_placebo_mean_tau_window_immediate_window",
+    "joint_placebo_p_value"
+  ) %in% boot$summary$statistic))
+})
+
 test_that("bootstrap supports equivalence diagnostics", {
   panel <- simulate_cdmc_data(
     n_units = 10,
@@ -990,4 +1502,49 @@ test_that("bootstrap supports SCIA diagnostics", {
   expect_s3_class(boot, "cdmc_bootstrap")
   expect_true(all(c("scia_f_statistic", "scia_p_value") %in% colnames(boot$draws)))
   expect_true(all(c("scia_f_statistic", "scia_p_value") %in% boot$summary$statistic))
+})
+
+test_that("bootstrap supports SCIA restriction-level statistics", {
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 0.8,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 9192
+  )
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 1,
+    seed = 9192
+  )
+  diagnostic <- cdmc_scia_test(
+    fit,
+    lags = 1,
+    restriction_blocks = list(recent_history = 1)
+  )
+
+  boot <- cdmc_bootstrap(
+    diagnostic,
+    n_boot = 2,
+    statistics = c("p_value", "restriction_adj_p_value"),
+    seed = 9192
+  )
+
+  expect_s3_class(boot, "cdmc_bootstrap")
+  expect_true(all(c("scia_p_value", "scia_restriction_adj_p_value_recent_history") %in% colnames(boot$draws)))
+  expect_true(all(c("scia_p_value", "scia_restriction_adj_p_value_recent_history") %in% boot$summary$statistic))
 })

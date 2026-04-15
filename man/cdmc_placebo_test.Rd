@@ -8,7 +8,7 @@ main baseline objective, and summarize the resulting pseudo effects on the held-
 placebo cells.
 }
 \usage{
-cdmc_placebo_test(object, periods = -2:0, verbose = FALSE)
+cdmc_placebo_test(object, periods = -2:0, rerun_tuning = FALSE, verbose = FALSE)
 
 \method{print}{cdmc_placebo_test}(x, ...)
 }
@@ -18,6 +18,12 @@ cdmc_placebo_test(object, periods = -2:0, verbose = FALSE)
   \item{periods}{One or more nonpositive integers indexing periods relative to
   the first positive exposure for each unit. For example, \code{-2:0} requests the
   two periods before first exposure and the immediately preceding period.}
+
+  \item{rerun_tuning}{Logical indicating whether the diagnostic refit should
+  rerun the source fit's automatic lambda-selection rule on the trimmed support
+  mask. This requires the source \code{cdmc_fit} object to have been created
+  with \code{lambda = NULL}; fixed-lambda source fits must use the default
+  \code{FALSE}.}
 
   \item{verbose}{Logical flag controlling progress messages during the diagnostic
   refit.}
@@ -31,6 +37,11 @@ The function identifies eligible zero-dose periods prior to the first positive
 treatment for each unit, removes the requested placebo cells from the baseline
 objective, and then computes pseudo effects on the held-out cells using the
 refitted baseline surface.
+
+By default, the refit reuses the original selected lambda. When
+\code{rerun_tuning = TRUE}, the refit instead reruns the stored automatic
+heuristic or blocked cross-validation lambda-selection rule on the trimmed
+support mask before rebuilding the baseline.
 
 The diagnostic is designed to check whether the baseline engine can reproduce
 untreated outcomes in windows that should not contain treatment effects.
@@ -53,13 +64,13 @@ fit <- cdmc_fit(
   unit = "unit",
   time = "time",
   covariates = "x1",
-  lambda = 0.2,
+  lambda = NULL,
   rank_max = 3,
   lag_order = 1,
   seed = 1
 )
 
-cdmc_placebo_test(fit, periods = -2:0)
+cdmc_placebo_test(fit, periods = -2:0, rerun_tuning = TRUE)
 }
 }
 \seealso{

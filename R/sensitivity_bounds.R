@@ -66,41 +66,106 @@ cdmc_sensitivity_bounds_layer_label <- function(perturbation_layer) {
   "stage2_response"
 }
 
-cdmc_sensitivity_bounds_optimization_source <- function(object) {
-  source_object <- cdmc_sensitivity_source_object(object)
+cdmc_sensitivity_bounds_first_class <- function(object, classes) {
+  matches <- vapply(classes, function(class_name) inherits(object, class_name), logical(1))
+  if (!any(matches)) {
+    return(NULL)
+  }
 
-  if (!inherits(source_object, "cdmc_fit") && !inherits(source_object, "cdmc_dr_fit")) {
+  classes[[which(matches)[1L]]]
+}
+
+cdmc_sensitivity_bounds_target_class <- function(object) {
+  class_name <- cdmc_sensitivity_bounds_first_class(
+    object,
+    c("cdmc_fit", "cdmc_dr_fit", "cdmc_dose_response", "cdmc_dynamic_estimand")
+  )
+  if (is.null(class_name)) {
+    stop(
+      "object must inherit from 'cdmc_fit', 'cdmc_dr_fit', 'cdmc_dose_response', or 'cdmc_dynamic_estimand'.",
+      call. = FALSE
+    )
+  }
+
+  class_name
+}
+
+cdmc_sensitivity_bounds_source_class <- function(
+  source_object,
+  argument_name = "source_object",
+  error_message = NULL
+) {
+  class_name <- cdmc_sensitivity_bounds_first_class(source_object, c("cdmc_fit", "cdmc_dr_fit"))
+  if (is.null(class_name)) {
+    stop(
+      error_message %||% sprintf("%s must inherit from 'cdmc_fit' or 'cdmc_dr_fit'.", argument_name),
+      call. = FALSE
+    )
+  }
+
+  class_name
+}
+
+cdmc_sensitivity_bounds_validate_supported_dose_response_model <- function(object, perturbation_layer) {
+  perturbation_layer <- cdmc_sensitivity_bounds_resolve_perturbation_layer(perturbation_layer)
+  object_class <- cdmc_sensitivity_bounds_target_class(object)
+
+  if (identical(perturbation_layer, "optimization")) {
+    return(invisible(NULL))
+  }
+
+  if (identical(object_class, "cdmc_dose_response") && !object$model %in% c("linear", "spline")) {
     stop(
       paste(
-        "Optimization-layer sensitivity bounds are currently available only for targets backed by 'cdmc_fit' or 'cdmc_dr_fit'.",
-        "Objects backed by other source classes are not supported."
+        "Exact stage2- or baseline-layer sensitivity bounds are currently available only for linear or spline cdmc_dose_response objects.",
+        "Use perturbation_layer = 'optimization' for local-refit bounds with nonlinear post-fit dose-response models."
       ),
       call. = FALSE
     )
   }
 
+  if (identical(object_class, "cdmc_dynamic_estimand") &&
+      inherits(object$source_object, "cdmc_dose_response") &&
+      !object$source_object$model %in% c("linear", "spline")) {
+    stop(
+      paste(
+        "Exact stage2- or baseline-layer sensitivity bounds are currently available only for cdmc_dynamic_estimand objects",
+        "backed by linear or spline cdmc_dose_response models.",
+        "Use perturbation_layer = 'optimization' when the source dose-response model is nonlinear."
+      ),
+      call. = FALSE
+    )
+  }
+}
+
+cdmc_sensitivity_bounds_optimization_source <- function(object) {
+  source_object <- cdmc_sensitivity_source_object(object)
+  cdmc_sensitivity_bounds_source_class(
+    source_object,
+    error_message = paste(
+      "Optimization-layer sensitivity bounds are currently available only for targets backed by 'cdmc_fit' or 'cdmc_dr_fit'.",
+      "Objects backed by other source classes are not supported."
+    )
+  )
+
   source_object
 }
 
 cdmc_sensitivity_bounds_optimization_mask <- function(object) {
-  if (inherits(object, "cdmc_fit")) {
+  source_class <- cdmc_sensitivity_bounds_source_class(object, argument_name = "object")
+
+  if (identical(source_class, "cdmc_fit")) {
     return(object$optimization_mask %||% object$eligible_mask)
   }
 
-  if (inherits(object, "cdmc_dr_fit")) {
-    return(object$observed_mask)
-  }
-
-  stop("object must inherit from 'cdmc_fit' or 'cdmc_dr_fit'.", call. = FALSE)
+  object$observed_mask
 }
 
 cdmc_sensitivity_bounds_optimization_basis <- function(object) {
-  if (inherits(object, "cdmc_dr_fit")) {
-    return("dr_optimization_local_refit")
-  }
+  source_class <- cdmc_sensitivity_bounds_source_class(object, argument_name = "object")
 
-  if (!inherits(object, "cdmc_fit")) {
-    stop("object must inherit from 'cdmc_fit' or 'cdmc_dr_fit'.", call. = FALSE)
+  if (identical(source_class, "cdmc_dr_fit")) {
+    return("dr_optimization_local_refit")
   }
 
   if (identical(object$objective %||% "staged", "joint")) {
@@ -113,7 +178,7 @@ cdmc_sensitivity_bounds_optimization_basis <- function(object) {
 cdmc_sensitivity_bounds_optimization_scale_source <- function(object) {
   source_object <- cdmc_sensitivity_bounds_optimization_source(object)
   optimization_mask <- cdmc_sensitivity_bounds_optimization_mask(source_object)
-  if (inherits(source_object, "cdmc_dr_fit")) {
+  if (identical(cdmc_sensitivity_bounds_source_class(source_object), "cdmc_dr_fit")) {
     return(list(
       response = as.numeric(source_object$y_matrix[optimization_mask]),
       residuals = as.numeric(source_object$effect$tau[optimization_mask]),
@@ -559,16 +624,17 @@ cdmc_sensitivity_bounds_dose_response_map <- function(object, perturbation_layer
 
 cdmc_sensitivity_bounds_primary_scale_source <- function(object, perturbation_layer = c("stage2", "baseline")) {
   perturbation_layer <- cdmc_sensitivity_bounds_resolve_perturbation_layer(perturbation_layer)
+  object_class <- cdmc_sensitivity_bounds_target_class(object)
 
   if (identical(perturbation_layer, "optimization")) {
     return(cdmc_sensitivity_bounds_optimization_scale_source(object))
   }
 
-  if (inherits(object, "cdmc_dynamic_estimand")) {
+  if (identical(object_class, "cdmc_dynamic_estimand")) {
     return(cdmc_sensitivity_bounds_primary_scale_source(object$source_object, perturbation_layer = perturbation_layer))
   }
 
-  if (inherits(object, "cdmc_dose_response")) {
+  if (identical(object_class, "cdmc_dose_response")) {
     if (identical(perturbation_layer, "baseline") && inherits(object$fit_object, "cdmc_fit")) {
       return(cdmc_sensitivity_bounds_primary_scale_source(object$fit_object, perturbation_layer = perturbation_layer))
     }
@@ -584,7 +650,7 @@ cdmc_sensitivity_bounds_primary_scale_source <- function(object, perturbation_la
     ))
   }
 
-  if (inherits(object, "cdmc_dr_fit")) {
+  if (identical(object_class, "cdmc_dr_fit")) {
     if (identical(perturbation_layer, "baseline")) {
       control_residuals <- cdmc_sensitivity_bounds_dr_control_residuals(object)
       if (length(control_residuals) > 0L) {
@@ -607,7 +673,7 @@ cdmc_sensitivity_bounds_primary_scale_source <- function(object, perturbation_la
     ))
   }
 
-  if (inherits(object, "cdmc_fit")) {
+  if (identical(object_class, "cdmc_fit")) {
     if (identical(perturbation_layer, "baseline")) {
       control_residuals <- cdmc_sensitivity_bounds_fit_control_residuals(object)
       if (length(control_residuals) > 0L) {
@@ -644,11 +710,6 @@ cdmc_sensitivity_bounds_primary_scale_source <- function(object, perturbation_la
       label = "active_treatment_mean"
     ))
   }
-
-  stop(
-    "object must inherit from 'cdmc_fit', 'cdmc_dr_fit', 'cdmc_dose_response', or 'cdmc_dynamic_estimand'.",
-    call. = FALSE
-  )
 }
 
 cdmc_sensitivity_bounds_resolve_scale <- function(
@@ -1278,6 +1339,7 @@ cdmc_sensitivity_bounds_build_specs <- function(
 ) {
   perturbation_layer <- cdmc_sensitivity_bounds_resolve_perturbation_layer(perturbation_layer)
   prediction_type <- match.arg(prediction_type)
+  object_class <- cdmc_sensitivity_bounds_target_class(object)
 
   if (identical(perturbation_layer, "optimization")) {
     return(cdmc_sensitivity_bounds_refit_specs(
@@ -1293,7 +1355,7 @@ cdmc_sensitivity_bounds_build_specs <- function(
     ))
   }
 
-  if (inherits(object, "cdmc_dynamic_estimand")) {
+  if (identical(object_class, "cdmc_dynamic_estimand")) {
     return(cdmc_sensitivity_bounds_dynamic_specs(
       object,
       collected = collected,
@@ -1301,7 +1363,7 @@ cdmc_sensitivity_bounds_build_specs <- function(
     ))
   }
 
-  if (inherits(object, "cdmc_dose_response")) {
+  if (identical(object_class, "cdmc_dose_response")) {
     return(cdmc_sensitivity_bounds_dose_response_specs(
       object = object,
       collected = collected,
@@ -1312,7 +1374,7 @@ cdmc_sensitivity_bounds_build_specs <- function(
     ))
   }
 
-  if (inherits(object, "cdmc_dr_fit")) {
+  if (identical(object_class, "cdmc_dr_fit")) {
     return(cdmc_sensitivity_bounds_dr_specs(
       object = object,
       collected = collected,
@@ -1322,17 +1384,10 @@ cdmc_sensitivity_bounds_build_specs <- function(
     ))
   }
 
-  if (inherits(object, "cdmc_fit")) {
-    return(cdmc_sensitivity_bounds_fit_specs(
-      object,
-      collected = collected,
-      perturbation_layer = perturbation_layer
-    ))
-  }
-
-  stop(
-    "object must inherit from 'cdmc_fit', 'cdmc_dr_fit', 'cdmc_dose_response', or 'cdmc_dynamic_estimand'.",
-    call. = FALSE
+  cdmc_sensitivity_bounds_fit_specs(
+    object,
+    collected = collected,
+    perturbation_layer = perturbation_layer
   )
 }
 
@@ -1508,26 +1563,19 @@ cdmc_sensitivity_bounds <- function(
   prediction_type = c("response", "slope"),
   refit_step = NULL
 ) {
-  if (!inherits(object, "cdmc_fit") &&
-      !inherits(object, "cdmc_dr_fit") &&
-      !inherits(object, "cdmc_dose_response") &&
-      !inherits(object, "cdmc_dynamic_estimand")) {
-    stop(
-      "object must inherit from 'cdmc_fit', 'cdmc_dr_fit', 'cdmc_dose_response', or 'cdmc_dynamic_estimand'.",
-      call. = FALSE
-    )
-  }
+  object_class <- cdmc_sensitivity_bounds_target_class(object)
 
-  prediction_type <- match.arg(prediction_type)
   perturbation_layer <- cdmc_sensitivity_bounds_resolve_perturbation_layer(perturbation_layer)
+  cdmc_sensitivity_bounds_validate_supported_dose_response_model(object, perturbation_layer = perturbation_layer)
+  prediction_type <- match.arg(prediction_type)
   perturbation_constraint <- cdmc_sensitivity_bounds_resolve_perturbation_constraint(perturbation_constraint)
   perturbation_scope <- cdmc_sensitivity_bounds_resolve_perturbation_scope(perturbation_scope)
 
-  if (!inherits(object, "cdmc_dr_fit") && (!is.null(contrast_history) || !is.null(reference_history))) {
+  if (!identical(object_class, "cdmc_dr_fit") && (!is.null(contrast_history) || !is.null(reference_history))) {
     stop("contrast_history and reference_history are only supported for cdmc_dr_fit sensitivity bounds.", call. = FALSE)
   }
 
-  if (!inherits(object, "cdmc_dose_response") && (!is.null(prediction_dose) || !is.null(prediction_history))) {
+  if (!identical(object_class, "cdmc_dose_response") && (!is.null(prediction_dose) || !is.null(prediction_history))) {
     stop("prediction_dose and prediction_history are only supported for cdmc_dose_response sensitivity bounds.", call. = FALSE)
   }
 

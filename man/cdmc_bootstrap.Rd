@@ -54,19 +54,26 @@ cdmc_bootstrap(
   contributions, and \code{"dose_contrast_dr"} collects a linear contrast
   between two dose histories. For placebo and carryover diagnostics,
   \code{"mean_tau"} collects the mean pseudo effect. For joint placebo
-  diagnostics, \code{"period_mean_tau"} collects the period-specific placebo
-  means and \code{"joint_p_value"} collects the aggregated joint p value. For
+  diagnostics, \code{"period_mean_tau"} collects the placebo means when the
+  diagnostic was built from one window per period, \code{"window_mean_tau"}
+  collects the placebo means for named or multi-period windows, and
+  \code{"joint_p_value"} collects the aggregated joint p value. For
   \code{cdmc_equivalence_test} objects, \code{"mean_tau"} collects the mean
   diagnostic effect and \code{"equivalence_p_value"} collects the TOST-style
   equivalence p value. For \code{cdmc_scia_test} objects, \code{"f_statistic"}
-  and \code{"p_value"} collect the incremental lagged-outcome screening
-  statistics. When
+  and \code{"p_value"} collect the global incremental lagged-outcome
+  statistics, while \code{"restriction_p_value"} and
+  \code{"restriction_adj_p_value"} collect the block-level raw and adjusted
+  SCIA restriction p values. When
   \code{statistics} is omitted, a class-specific default set is used.}
 
   \item{rerun_tuning}{Logical flag controlling whether lambda selection should be
   rerun in each bootstrap replicate when the original fit used heuristic or
   cross-validated lambda selection. If \code{NULL}, the default is to rerun
-  tuning unless the original fit used a fixed lambda.}
+  tuning unless the original fit used a fixed lambda. For empirical workflows
+  built on automatic tuning, keeping this at its default behavior or setting it
+  explicitly to \code{TRUE} is recommended so the bootstrap reflects retuning
+  rather than treating the stored lambda as fixed.}
 
   \item{conf_level}{Confidence level used for the reported percentile interval.}
 
@@ -112,6 +119,10 @@ The bootstrap operates at the unit level. Entire unit histories are sampled with
 replacement, and each sampled history is assigned a synthetic unit identifier so
 that the balanced-panel contract remains valid in the bootstrap dataset.
 
+When the source estimator used automatic lambda selection, empirical workflows
+should generally keep \code{rerun_tuning = TRUE} so bootstrap uncertainty
+propagates the retuning step instead of conditioning on one stored penalty.
+
 For \code{cdmc_dr_fit()} objects, the bootstrap refits the full cross-fitted DR
 pipeline inside each replicate. When the DR object used the built-in internal
 weighting nuisance model, whether Gaussian, kernel-smoothed, or fold-local
@@ -123,7 +134,10 @@ For supported diagnostic objects, the bootstrap resamples the parent fitted
 panel, refits the original \code{cdmc_fit()} model, and reruns the requested
 diagnostic on that bootstrap replicate. This keeps placebo, carryover,
 equivalence, SCIA, and joint placebo summaries aligned with the estimator
-configuration that generated the original diagnostic.
+configuration that generated the original diagnostic, including whether the
+diagnostic refits reuse the selected lambda or rerun the stored automatic
+tuning rule, and for joint placebo objects it preserves the original named
+window protocol.
 
 For \code{cdmc_dose_response()} objects, the bootstrap resamples the parent
 \code{cdmc_fit()} panel, refits that parent model, recreates the stored
@@ -180,13 +194,16 @@ fit <- cdmc_fit(
   unit = "unit",
   time = "time",
   covariates = "x1",
-  lambda = 0.2,
+  lambda = NULL,
+  lambda_selection = "cv",
+  cv_rounds = 3L,
+  cv_block_size = 2L,
   rank_max = 3,
   lag_order = 1,
   seed = 1
 )
 
-cdmc_bootstrap(fit, n_boot = 10, seed = 1)
+cdmc_bootstrap(fit, n_boot = 10, rerun_tuning = TRUE, seed = 1)
 
 dr_fit <- cdmc_dr_fit(
   data = panel,

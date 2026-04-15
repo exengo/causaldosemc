@@ -1,0 +1,194 @@
+---
+title: "DR Weighting Workflows"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{DR Weighting Workflows}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(causaldosemc)
+options(width = 100)
+```
+
+This vignette covers the main weighting paths for `cdmc_dr_fit()`: internal
+GPS weighting, balancing-based DR fitting, reusable external weights, and DR
+replay under alternative nuisance choices.
+
+To keep the focus on weighting rather than support trimming, the examples below
+set `washout = 0`.
+
+## Build a panel with richer continuous-dose variation
+
+```{r}
+panel <- simulate_cdmc_data(
+  n_units = 18,
+  n_times = 10,
+  beta = 0.85,
+  lag_beta = 0.2,
+  noise_sd = 0.05,
+  switch_on_prob = 0.17,
+  switch_off_prob = 0.4,
+  seed = 303
+)
+
+original_dose <- panel$dose
+active <- abs(original_dose) > 0
+
+panel$dose[active] <- sign(original_dose[active]) * (
+  0.2 + 0.6 * panel$x1[active] + 0.1 * panel$time[active] / max(panel$time)
+)
+panel$y <- panel$y + 0.5 * (panel$dose - original_dose)
+
+head(panel)
+```
+
+## Fit DR with an internal Gaussian GPS model
+
+```{r}
+dr_gps <- cdmc_dr_fit(
+  data = panel,
+  outcome = "y",
+  dose = "dose",
+  unit = "unit",
+  time = "time",
+  covariates = "x1",
+  weight_method = "gaussian_gps",
+  gps_model = "linear",
+  n_folds = 2L,
+  lambda = 0.18,
+  washout = 0,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 303
+)
+
+dr_gps
+```
+
+If `mgcv` is installed, the same Gaussian GPS path can use a smoother mean
+model for the assignment nuisance layer.
+
+```{r}
+if (requireNamespace("mgcv", quietly = TRUE)) {
+  dr_gam <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "gaussian_gps",
+    gps_model = "gam",
+    gps_df = 4L,
+    n_folds = 2L,
+    lambda = 0.18,
+    washout = 0,
+    lag_order = 1,
+    rank_max = 3,
+    seed = 303
+  )
+
+  dr_gam
+}
+```
+
+## Fit DR with internal adaptive balancing weights
+
+```{r}
+dr_adaptive <- cdmc_dr_fit(
+  data = panel,
+  outcome = "y",
+  dose = "dose",
+  unit = "unit",
+  time = "time",
+  covariates = "x1",
+  weight_method = "adaptive_balance",
+  adaptive_balance_methods = c("entropy_balance", "kernel_balance"),
+  kernel_balance_centers = 6L,
+  n_folds = 2L,
+  lambda = 0.18,
+  washout = 0,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 303
+)
+
+dr_adaptive
+```
+
+## Reuse external balancing weights
+
+External weights are useful when the same balancing design should be carried
+into the staged fit, DR fit, and post-fit dose-response layer.
+
+```{r}
+w_entropy <- cdmc_entropy_balance_weights(
+  panel,
+  dose = "dose",
+  covariates = "x1",
+  time = "time",
+  time_effects = TRUE
+)
+
+dr_external <- cdmc_dr_fit(
+  data = panel,
+  outcome = "y",
+  dose = "dose",
+  unit = "unit",
+  time = "time",
+  covariates = "x1",
+  weights = w_entropy,
+  n_folds = 2L,
+  lambda = 0.18,
+  washout = 0,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 303
+)
+
+dr_external
+```
+
+## Bootstrap DR summaries
+
+```{r}
+dr_boot <- cdmc_bootstrap(
+  dr_adaptive,
+  n_boot = 10,
+  statistics = c("coefficients", "average_tau_dr", "dose_contrast_dr"),
+  contrast_history = c(dose_lag0 = 1, dose_lag1 = 0.5),
+  reference_history = c(dose_lag0 = 0, dose_lag1 = 0),
+  seed = 303
+)
+
+dr_boot$summary
+```
+
+## Replay alternative weighting scenarios
+
+```{r}
+dr_scan <- cdmc_sensitivity_scan(
+  dr_adaptive,
+  washout_grid = 0:1,
+  weight_specs = list(
+    gaussian_linear = list(
+      weight_method = "gaussian_gps",
+      gps_model = "linear"
+    )
+  )
+)
+
+dr_scan$results[, c("weight_scenario", "fit_success", "weight_mode")]
+```
+
+The practical pattern is:
+
+1. use internal Gaussian or kernel GPS weighting when a direct nuisance model
+   is acceptable,
+2. use balancing-based DR weights when balance itself is the primary design
+   target, and
+3. use external weights when the same weighting object should propagate across
+   several package layers.

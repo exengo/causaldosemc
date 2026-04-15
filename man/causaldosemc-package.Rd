@@ -17,9 +17,10 @@ weighted fits switch to a weighted proximal singular-value-thresholding routine.
 
 In stage 2, residual treatment effects are estimated from the difference between
 observed outcomes and the imputed baseline. Version 0.1 provides either a
-linear or spline contemporaneous or distributed-lag dose-response model, can
-optionally reuse observation weights from the main fit, and provides a
-residual-based carryover diagnostic for post-exit zero-dose periods.
+linear, spline, GAM, tree, or forest contemporaneous or distributed-lag
+dose-response model, can optionally reuse observation weights from the main
+fit, and provides a residual-based carryover diagnostic for post-exit zero-dose
+periods.
 
 When the main fit is run with \code{objective = "joint"}, the package instead
 fits the low-rank surface, additive nuisance terms, and the chosen linear or
@@ -35,7 +36,7 @@ and the refit-based diagnostic objects.
 For diagnostics, the package now includes both a residual carryover screen and
 refit-based placebo and carryover tests that hold out targeted control windows
 from stage-1 fitting, a joint placebo pretrend diagnostic across multiple
-windows, a SCIA-oriented lagged-outcome screen for dynamic assignment, and a
+windows, a SCIA-oriented lagged-outcome restriction diagnostic for dynamic assignment, and a
 TOST-style equivalence helper for assessing whether those diagnostic effects
 are practically negligible.
 
@@ -48,16 +49,21 @@ dependence, and weight dependence relative to the stored source fit, and a
 formal bounded-bias helper, \code{cdmc_sensitivity_bounds()}, which reports
 exact worst-case intervals for supported linear post-fit summaries under either
 a stage-2-response or baseline-counterfactual bounded perturbation model,
-optionally restricted to sparse contamination fractions and evaluated under
-either cellwise or energy perturbation budgets, plus a local
-optimization-refit layer for \code{cdmc_fit}- and \code{cdmc_dr_fit}-backed
-targets that numerically linearizes perturbations requiring the staged
-baseline, joint objective, or cross-fitted DR pipeline to be re-solved.
+optionally restricted to sparse contamination fractions, evaluated under either
+cellwise or energy perturbation budgets, and grouped at the cell, unit, or
+time-period level, plus a local optimization-refit layer for \code{cdmc_fit}-
+and \code{cdmc_dr_fit}-backed targets that numerically linearizes
+perturbations requiring the staged baseline, joint objective, or cross-fitted
+DR pipeline to be re-solved.
 
 For dose-response estimation beyond the built-in main-fit stage-2 model, the package
-also provides a post-fit linear or spline dose-response layer with optional
-observation weights. Continuous-treatment balancing weights can be estimated
-through \code{cdmc_cbps_weights()} when \code{CBPS} is available.
+also provides a post-fit linear, spline, GAM, tree, or forest dose-response
+layer with optional observation weights. Continuous-treatment balancing weights
+can be estimated through \code{cdmc_cbps_weights()} when \code{CBPS} is
+available, or through the built-in exponential-tilting helper
+\code{cdmc_entropy_balance_weights()}, or through the nonlinear reduced-kernel
+helper \code{cdmc_kernel_balance_weights()}, or through the adaptive selector
+\code{cdmc_adaptive_balance_weights()}.
 
 For dynamic or pathwise summaries, the package also provides
 \code{cdmc_dynamic_estimand()}, which evaluates user-supplied dose histories on
@@ -69,12 +75,15 @@ max-t simultaneous bands over multi-statistic summary vectors.
 The package also includes a cross-fitted doubly robust-style linear estimator,
 \code{cdmc_dr_fit()}, which combines out-of-fold baseline prediction with
 either internally estimated Gaussian or kernel GPS weights, fold-local CBPS
-balancing weights, or externally supplied weights. The internal Gaussian and
-kernel GPS paths can use raw linear terms, natural-spline expansions, GAM
-smooths, regression trees, or regression forests in the assignment mean model,
-and the kernel path replaces the Gaussian density assumption with
-kernel-smoothed residual and marginal dose densities. The CBPS path currently
-supports linear or spline covariate formulas.
+balancing weights, fold-local entropy-balance weights, fold-local
+kernel-balance weights, fold-local adaptive-balance weights, or externally
+supplied weights. The internal Gaussian and kernel GPS paths can use raw linear
+terms, natural-spline expansions, GAM smooths, regression trees, regression
+forests, gradient boosting models, or convex stacks of those learners in the
+assignment mean model, and the kernel path replaces the Gaussian density
+assumption with kernel-smoothed residual and marginal dose densities. The CBPS,
+entropy-balance, kernel-balance, and adaptive-balance paths currently support
+linear or spline covariate formulas.
 
 The current implementation is intentionally narrow and aligned to the first
 research milestone of the broader library goal: continuous, reversible treatment
@@ -90,7 +99,7 @@ carryover screen, \code{\link{cdmc_placebo_test}} and
 \code{\link{cdmc_carryover_refit_test}}, \code{\link{cdmc_joint_placebo_test}},
 and \code{\link{cdmc_equivalence_test}} for refit-based diagnostics,
 aggregated placebo checks, and equivalence checks, and
-\code{\link{cdmc_dynamic_estimand}}, \code{\link{cdmc_dose_response}}, \code{\link{cdmc_cbps_weights}},
+\code{\link{cdmc_dynamic_estimand}}, \code{\link{cdmc_dose_response}}, \code{\link{cdmc_adaptive_balance_weights}}, \code{\link{cdmc_cbps_weights}}, \code{\link{cdmc_entropy_balance_weights}}, \code{\link{cdmc_kernel_balance_weights}},
 \code{\link{cdmc_dr_fit}}, \code{\link{cdmc_sensitivity_scan}},
 \code{\link{cdmc_sensitivity_bounds}}, and
 \code{\link{simulate_cdmc_data}} for post-fit dose-response work, the

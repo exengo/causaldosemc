@@ -56,8 +56,10 @@ cdmc_sensitivity_scan(
   either be a raw external weight specification or a named list overriding
   fields such as \code{weights}, \code{weight_method}, \code{gps_model},
   \\code{gps_bandwidth}, \\code{gps_forest_trees}, \\code{gps_forest_mtry},
-  \\code{gps_forest_min_node_size}, \\code{cbps_method}, or related internal
-  weighting replay settings.}
+  \\code{gps_forest_min_node_size}, \\code{cbps_method},
+  \\code{adaptive_balance_methods}, \\code{entropy_balance_degree},
+  \\code{kernel_balance_centers}, or related internal weighting replay
+  settings.}
 
   \item{include_unweighted}{Logical indicating whether an explicit unweighted
   replay should be included alongside the stored weighting setup. By default,

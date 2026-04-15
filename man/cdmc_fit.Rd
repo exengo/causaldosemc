@@ -72,10 +72,13 @@ cdmc_fit(
   fit and the built-in stage-2 effect fit. This can be a column name in
   \code{data}, a numeric vector of length \code{nrow(data)}, a numeric matrix
   matching the panel dimensions, or an object with a numeric \code{weights}
-  component such as the output of \code{cdmc_cbps_weights()}. The internal fit
-  normalizes supplied weights to have mean 1 over the active optimization
-  sample: eligible zero-dose control cells under \code{objective = "staged"}
-  and observed estimation cells under \code{objective = "joint"}.}
+  component such as the output of \code{cdmc_cbps_weights()} or
+  \code{cdmc_entropy_balance_weights()} or
+  \code{cdmc_kernel_balance_weights()} or
+  \code{cdmc_adaptive_balance_weights()}. The internal fit normalizes supplied
+  weights to have mean 1 over the active optimization sample: eligible zero-
+  dose control cells under \code{objective = "staged"} and observed estimation
+  cells under \code{objective = "joint"}.}
 
   \item{lambda}{Nonnegative nuclear-norm penalty passed to
   the low-rank solver. If \code{NULL}, a default value is computed from the
@@ -92,7 +95,9 @@ cdmc_fit(
   \code{lambda = NULL}. \code{"heuristic"} uses a fraction of
   a reference singular-value threshold after partialling out additive nuisance
   terms. \code{"cv"} uses blocked cross-validation on the active optimization
-  sample.}
+  sample and is the recommended path for empirical workflows when the panel has
+  enough eligible zero-dose support to hold out contiguous control blocks
+  safely.}
 
   \item{lambda_grid}{Optional numeric grid of candidate lambda values used when
   \code{lambda_selection = "cv"}. If \code{NULL}, a decreasing logarithmic grid is
@@ -193,6 +198,9 @@ basis.
 
 If \code{lambda = NULL}, the penalty can be chosen either heuristically or by
 blocked cross-validation on the objective-specific optimization sample.
+For empirical workflows, prefer blocked cross-validation when support allows
+and treat the heuristic rule as a fallback for thin-support or exploratory
+settings.
 Unweighted fits use \code{softImpute} with \code{type = "svd"}, while weighted
 fits use a weighted proximal singular-value-thresholding update on the same
 objective-specific loss.
@@ -255,7 +263,10 @@ fit <- cdmc_fit(
   covariates = "x1",
   washout = 1,
   lag_order = 1,
-  lambda = 0.2,
+  lambda = NULL,
+  lambda_selection = "cv",
+  cv_rounds = 3L,
+  cv_block_size = 2L,
   rank_max = 3,
   seed = 1
 )

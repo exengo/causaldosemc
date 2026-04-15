@@ -1,0 +1,147 @@
+---
+title: "Empirical Workflow"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Empirical Workflow}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(causaldosemc)
+options(width = 100)
+```
+
+This vignette shows the package workflow intended for an empirical paper:
+blocked-CV main fitting, retuned refit diagnostics, bootstrap with tuning
+reruns, and both replay-based and bounded-bias sensitivity summaries.
+
+## Fit the main model with blocked cross-validation
+
+```{r}
+panel <- simulate_cdmc_data(
+  n_units = 18,
+  n_times = 10,
+  beta = 0.9,
+  lag_beta = 0.3,
+  noise_sd = 0.05,
+  switch_on_prob = 0.16,
+  switch_off_prob = 0.42,
+  seed = 202
+)
+
+empirical_fit <- cdmc_fit(
+  data = panel,
+  outcome = "y",
+  dose = "dose",
+  unit = "unit",
+  time = "time",
+  covariates = "x1",
+  lambda = NULL,
+  lambda_selection = "cv",
+  cv_rounds = 3L,
+  cv_block_size = 2L,
+  washout = 1,
+  lag_order = 1,
+  rank_max = 3,
+  seed = 202
+)
+
+empirical_fit
+empirical_fit$lambda
+```
+
+## Run refit diagnostics
+
+The repeated placebo and carryover refit helpers can rerun the same automatic
+tuning rule used in the source fit.
+
+```{r}
+pretrend <- cdmc_joint_placebo_test(
+  empirical_fit,
+  placebo_windows = list(
+    early_window = -3:-2,
+    immediate_window = -1
+  ),
+  rerun_tuning = TRUE
+)
+
+carryover <- cdmc_carryover_refit_test(
+  empirical_fit,
+  periods = 1:2,
+  rerun_tuning = TRUE
+)
+
+pretrend
+carryover
+```
+
+## Screen dynamic assignment restrictions
+
+```{r}
+assignment_check <- cdmc_scia_test(
+  empirical_fit,
+  lags = 2,
+  outcome_proxy = "tau",
+  restriction_blocks = list(
+    recent_history = 1,
+    deeper_history = 2
+  )
+)
+
+assignment_check
+```
+
+## Bootstrap the main fit
+
+For substantive work, increase `n_boot` well beyond the small value used here
+to keep vignette build times reasonable.
+
+```{r}
+empirical_boot <- cdmc_bootstrap(
+  empirical_fit,
+  n_boot = 10,
+  statistics = c("coefficients", "average_tau"),
+  rerun_tuning = TRUE,
+  seed = 202
+)
+
+empirical_boot$summary
+```
+
+## Replay washout and support choices
+
+```{r}
+empirical_scan <- cdmc_sensitivity_scan(
+  empirical_fit,
+  washout_grid = 0:2,
+  rerun_tuning = TRUE
+)
+
+empirical_scan$support_summary
+```
+
+## Add formal bounded-bias sensitivity summaries
+
+```{r}
+empirical_bounds <- cdmc_sensitivity_bounds(
+  empirical_fit,
+  statistics = c("coefficients", "average_tau"),
+  gamma_grid = c(0, 0.25, 0.5),
+  perturbation_layer = "stage2",
+  scale = "residual_sd"
+)
+
+summary(empirical_bounds)
+```
+
+An empirical-paper workflow now has a clear default structure:
+
+1. fit with blocked cross-validation,
+2. rerun tuning inside placebo and carryover refits,
+3. report bootstrap uncertainty under retuning, and
+4. add replay-based and formal sensitivity summaries around the same fit.
+
+For a heavier but closer-to-estimation sensitivity layer, replace
+`perturbation_layer = "stage2"` with `perturbation_layer = "optimization"`.

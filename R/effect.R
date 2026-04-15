@@ -28,17 +28,11 @@ cdmc_prepare_effect_history <- function(
   }
 
   sample_indices <- which(effect_sample_mask, arr.ind = TRUE)
-  history <- data.frame(
-    row = sample_indices[, 1L],
-    col = sample_indices[, 2L],
-    tau = tau_matrix[sample_indices],
-    stringsAsFactors = FALSE
+  history <- cdmc_build_sample_history(
+    lag_array = lag_array,
+    sample_indices = sample_indices,
+    tau = tau_matrix[sample_indices]
   )
-
-  for (index in seq_len(dim(lag_array)[3L])) {
-    lag_name <- dimnames(lag_array)[[3L]][index]
-    history[[lag_name]] <- lag_array[, , index][sample_indices]
-  }
 
   list(
     tau_matrix = tau_matrix,

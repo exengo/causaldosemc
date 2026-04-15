@@ -102,15 +102,23 @@ cdmc_active_dose_mask <- function(dose_matrix, zero_tolerance) {
 }
 
 cdmc_lag_exposure_magnitude <- function(lag_array) {
-  exposure_magnitude <- matrix(0, nrow = dim(lag_array)[1L], ncol = dim(lag_array)[2L])
+  n_units <- dim(lag_array)[1L]
+  n_times <- dim(lag_array)[2L]
+  lag_values <- lag_array
+  lag_values[is.na(lag_values)] <- 0
 
-  for (index in seq_len(dim(lag_array)[3L])) {
-    lag_slice <- lag_array[, , index]
-    lag_slice[is.na(lag_slice)] <- 0
-    exposure_magnitude <- exposure_magnitude + abs(lag_slice)
-  }
+  exposure_magnitude <- rowSums(abs(matrix(
+    lag_values,
+    nrow = n_units * n_times,
+    ncol = dim(lag_array)[3L]
+  )))
 
-  exposure_magnitude
+  matrix(
+    exposure_magnitude,
+    nrow = n_units,
+    ncol = n_times,
+    dimnames = dimnames(lag_array)[1:2]
+  )
 }
 
 cdmc_prepare_panel <- function(

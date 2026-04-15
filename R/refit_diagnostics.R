@@ -1,4 +1,20 @@
-cdmc_refit_baseline <- function(object, drop_mask, verbose = FALSE) {
+cdmc_resolve_refit_tuning_flag <- function(object, rerun_tuning = FALSE) {
+  if (!is.logical(rerun_tuning) || length(rerun_tuning) != 1L || is.na(rerun_tuning)) {
+    stop("rerun_tuning must be TRUE or FALSE.", call. = FALSE)
+  }
+
+  rerun_tuning <- isTRUE(rerun_tuning)
+  if (rerun_tuning && identical(object$lambda_tuning$method, "fixed")) {
+    stop(
+      "rerun_tuning = TRUE requires a source cdmc_fit object with automatically selected lambda.",
+      call. = FALSE
+    )
+  }
+
+  rerun_tuning
+}
+
+cdmc_refit_baseline <- function(object, drop_mask, rerun_tuning = FALSE, verbose = FALSE) {
   if (!inherits(object, "cdmc_fit")) {
     stop("object must inherit from 'cdmc_fit'.", call. = FALSE)
   }
@@ -7,7 +23,10 @@ cdmc_refit_baseline <- function(object, drop_mask, verbose = FALSE) {
     stop("drop_mask must be a logical matrix matching the panel dimensions.", call. = FALSE)
   }
 
-  fit_control <- object$fit_control
+  rerun_tuning <- cdmc_resolve_refit_tuning_flag(object, rerun_tuning = rerun_tuning)
+  build_bootstrap_fit_spec <- get("cdmc_build_bootstrap_fit_spec", mode = "function")
+  refit_spec <- build_bootstrap_fit_spec(object, rerun_tuning = rerun_tuning)
+  fit_control <- refit_spec$fit_spec
   objective <- object$objective %||% fit_control$objective %||% "staged"
   fit_mask <- object$optimization_mask %||% object$eligible_mask
   train_mask <- fit_mask & !drop_mask
@@ -35,6 +54,8 @@ cdmc_refit_baseline <- function(object, drop_mask, verbose = FALSE) {
   )
   build_joint_effect_design <- get("cdmc_build_joint_effect_design", mode = "function")
   fit_model_components <- get("cdmc_fit_model_components", mode = "function")
+  select_fit_lambda <- get("cdmc_select_fit_lambda", mode = "function")
+  rank_max <- fit_control$rank_max %||% object$rank_max
   joint_design <- if (identical(objective, "joint") && !identical(object$effect_model, "none")) {
     build_joint_effect_design(
       dose_matrix = prepared$dose_matrix,
@@ -47,13 +68,41 @@ cdmc_refit_baseline <- function(object, drop_mask, verbose = FALSE) {
     NULL
   }
 
-  fit_model_components(
+  objective_x_matrices <- if (identical(objective, "joint") && !is.null(joint_design)) {
+    c(prepared$x_matrices, joint_design$matrices)
+  } else {
+    prepared$x_matrices
+  }
+
+  lambda_selection_result <- select_fit_lambda(
+    y_matrix = prepared$y_matrix,
+    x_matrices = objective_x_matrices,
+    mask = train_mask,
+    weight_matrix = object$weight_matrix,
+    lambda = fit_control$lambda,
+    lambda_fraction = fit_control$lambda_fraction %||% 0.25,
+    lambda_selection = fit_control$lambda_selection %||% "heuristic",
+    lambda_grid = fit_control$lambda_grid %||% NULL,
+    nlambda = fit_control$nlambda %||% 5L,
+    lambda_min_ratio = fit_control$lambda_min_ratio %||% 0.05,
+    cv_rounds = fit_control$cv_rounds %||% 5L,
+    cv_block_size = fit_control$cv_block_size %||% 2L,
+    rank_max = rank_max,
+    outer_maxit = fit_control$outer_maxit,
+    fe_maxit = fit_control$fe_maxit,
+    soft_maxit = fit_control$soft_maxit,
+    tol = fit_control$tol,
+    fe_tol = fit_control$fe_tol,
+    verbose = verbose
+  )
+
+  baseline_fit <- fit_model_components(
     prepared = prepared,
     objective = objective,
     fit_mask = train_mask,
     weight_matrix = object$weight_matrix,
-    lambda = object$lambda,
-    rank_max = object$rank_max,
+    lambda = lambda_selection_result$lambda,
+    rank_max = rank_max,
     lag_order = object$lag_order,
     effect_model = object$effect_model,
     effect_df = object$effect_df %||% 4L,
@@ -65,6 +114,11 @@ cdmc_refit_baseline <- function(object, drop_mask, verbose = FALSE) {
     verbose = verbose,
     joint_design = joint_design
   )$baseline
+
+  baseline_fit$lambda <- lambda_selection_result$lambda
+  baseline_fit$lambda_tuning <- lambda_selection_result$lambda_tuning
+  baseline_fit$rerun_tuning <- rerun_tuning
+  baseline_fit
 }
 
 cdmc_trim_drop_mask <- function(mask, drop_mask) {
@@ -162,11 +216,14 @@ cdmc_summarize_refit_test <- function(object, target_mask, baseline_fit, label, 
     t_statistic = t_statistic,
     p_value = p_value,
     cells = cells,
-    baseline_fit = baseline_fit
+    baseline_fit = baseline_fit,
+    rerun_tuning = baseline_fit$rerun_tuning %||% FALSE,
+    refit_lambda = baseline_fit$lambda %||% NA_real_,
+    refit_lambda_method = baseline_fit$lambda_tuning$method %||% NA_character_
   )
 }
 
-cdmc_placebo_test <- function(object, periods = -2:0, verbose = FALSE) {
+cdmc_placebo_test <- function(object, periods = -2:0, rerun_tuning = FALSE, verbose = FALSE) {
   if (!inherits(object, "cdmc_fit")) {
     stop("object must inherit from 'cdmc_fit'.", call. = FALSE)
   }
@@ -175,7 +232,12 @@ cdmc_placebo_test <- function(object, periods = -2:0, verbose = FALSE) {
     mask = object$eligible_mask,
     drop_mask = cdmc_build_placebo_mask(object, periods = periods)
   )
-  baseline_fit <- cdmc_refit_baseline(object, drop_mask = target_mask, verbose = verbose)
+  baseline_fit <- cdmc_refit_baseline(
+    object,
+    drop_mask = target_mask,
+    rerun_tuning = rerun_tuning,
+    verbose = verbose
+  )
 
   result <- cdmc_summarize_refit_test(
     object = object,
@@ -191,7 +253,7 @@ cdmc_placebo_test <- function(object, periods = -2:0, verbose = FALSE) {
   result
 }
 
-cdmc_carryover_refit_test <- function(object, periods = 1L, verbose = FALSE) {
+cdmc_carryover_refit_test <- function(object, periods = 1L, rerun_tuning = FALSE, verbose = FALSE) {
   if (!inherits(object, "cdmc_fit")) {
     stop("object must inherit from 'cdmc_fit'.", call. = FALSE)
   }
@@ -209,7 +271,12 @@ cdmc_carryover_refit_test <- function(object, periods = 1L, verbose = FALSE) {
     mask = object$eligible_mask,
     drop_mask = object$eligible_mask & cdmc_zero_dose_mask(object$dose_matrix, zero_tolerance = object$zero_tolerance) & exit_distance %in% periods
   )
-  baseline_fit <- cdmc_refit_baseline(object, drop_mask = target_mask, verbose = verbose)
+  baseline_fit <- cdmc_refit_baseline(
+    object,
+    drop_mask = target_mask,
+    rerun_tuning = rerun_tuning,
+    verbose = verbose
+  )
 
   result <- cdmc_summarize_refit_test(
     object = object,
@@ -229,6 +296,13 @@ print.cdmc_placebo_test <- function(x, ...) {
   cat("causaldosemc placebo diagnostic\n")
   cat(sprintf("  periods tested: %s\n", paste(x$periods, collapse = ", ")))
   cat(sprintf("  matched placebo cells: %d\n", x$n))
+  cat(sprintf("  rerun tuning in refit: %s\n", if (isTRUE(x$rerun_tuning)) "yes" else "no"))
+  if (is.finite(x$refit_lambda)) {
+    cat(sprintf("  refit lambda: %.6g\n", x$refit_lambda))
+  }
+  if (!is.na(x$refit_lambda_method)) {
+    cat(sprintf("  refit lambda selection: %s\n", x$refit_lambda_method))
+  }
   cat(sprintf("  mean pseudo effect: %.6g\n", x$mean_tau))
   if (is.finite(x$standard_error)) {
     cat(sprintf("  standard error: %.6g\n", x$standard_error))
@@ -247,6 +321,13 @@ print.cdmc_carryover_refit_test <- function(x, ...) {
   cat("causaldosemc refit carryover diagnostic\n")
   cat(sprintf("  periods tested: %s\n", paste(x$periods, collapse = ", ")))
   cat(sprintf("  matched exit cells: %d\n", x$n))
+  cat(sprintf("  rerun tuning in refit: %s\n", if (isTRUE(x$rerun_tuning)) "yes" else "no"))
+  if (is.finite(x$refit_lambda)) {
+    cat(sprintf("  refit lambda: %.6g\n", x$refit_lambda))
+  }
+  if (!is.na(x$refit_lambda_method)) {
+    cat(sprintf("  refit lambda selection: %s\n", x$refit_lambda_method))
+  }
   cat(sprintf("  mean pseudo effect: %.6g\n", x$mean_tau))
   if (is.finite(x$standard_error)) {
     cat(sprintf("  standard error: %.6g\n", x$standard_error))

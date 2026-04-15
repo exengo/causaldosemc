@@ -90,6 +90,101 @@ test_that("cross-fitted DR estimator reuses supplied fold assignments determinis
   expect_equal(fit_reused$effect$tau_dr, fit_seeded$effect$tau_dr, tolerance = 1e-10)
 })
 
+test_that("adaptive internal weight clipping caps extreme weights deterministically", {
+  raw_weights <- c(rep(1, 99), 100)
+
+  cap <- cdmc_resolve_internal_max_weight(raw_weights, max_weight = "adaptive")
+  clipped <- cdmc_cap_internal_weights(raw_weights, max_weight = "adaptive")
+
+  expect_equal(cap, 10, tolerance = 1e-8)
+  expect_equal(max(clipped), cap, tolerance = 1e-8)
+  expect_equal(cdmc_cap_internal_weights(raw_weights, max_weight = NULL), raw_weights)
+  expect_equal(cdmc_cap_internal_weights(raw_weights, max_weight = 5), pmin(raw_weights, 5))
+})
+
+test_that("cross-fitted DR estimator uses adaptive internal clipping by default", {
+  panel <- simulate_cdmc_data(
+    n_units = 16,
+    n_times = 10,
+    rank = 2,
+    beta = 0.8,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1148
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.15 + 2.5 * panel$x1[active]^3 + ifelse(panel$time[active] > stats::median(panel$time), 1.2, -0.2)
+  )
+  panel$y <- panel$y + 0.4 * (panel$dose - original_dose)
+
+  fit_adaptive <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "gaussian_gps",
+    gps_model = "linear",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1148
+  )
+
+  fit_none <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "gaussian_gps",
+    gps_model = "linear",
+    max_weight = NULL,
+    fold_assignments = fit_adaptive$fold_assignments,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1148
+  )
+
+  applied_caps <- vapply(
+    fit_adaptive$baseline$fold_summaries,
+    function(summary) summary$applied_max_weight %||% NA_real_,
+    numeric(1)
+  )
+  applied_caps <- applied_caps[is.finite(applied_caps)]
+
+  expect_s3_class(fit_adaptive, "cdmc_dr_fit")
+  expect_identical(fit_adaptive$max_weight, "adaptive")
+  expect_null(fit_none$max_weight)
+  expect_true(length(applied_caps) > 0L)
+  expect_true(all(is.finite(applied_caps)))
+  expect_equal(nrow(fit_adaptive$weight_diagnostics$by_fold), fit_adaptive$n_folds)
+  expect_true(all(c(
+    "observed_ess",
+    "observed_clipped_share",
+    "dr_sample_ess",
+    "dr_sample_ess_fraction"
+  ) %in% names(fit_adaptive$weight_diagnostics$by_fold)))
+  expect_true(is.finite(fit_adaptive$weight_diagnostics$overall$observed$ess))
+  expect_true(is.finite(fit_adaptive$weight_diagnostics$overall$dr_sample$ess))
+  expect_true(fit_adaptive$weight_diagnostics$overall$observed$ess <= fit_adaptive$weight_diagnostics$overall$observed$n_weights + 1e-8)
+  expect_true(fit_adaptive$weight_diagnostics$overall$dr_sample$ess <= fit_adaptive$weight_diagnostics$overall$dr_sample$n_weights + 1e-8)
+  expect_true(max(fit_adaptive$data$.cdmc_weight, na.rm = TRUE) <= max(applied_caps) + 1e-8)
+  expect_equal(fit_none$weight_diagnostics$overall$observed$clipped_count, 0L)
+  expect_true(max(fit_none$data$.cdmc_weight, na.rm = TRUE) >= max(fit_adaptive$data$.cdmc_weight, na.rm = TRUE))
+})
+
 test_that("cross-fitted DR estimator accepts CBPS weight objects", {
   testthat::skip_if_not_installed("CBPS")
 
@@ -179,6 +274,166 @@ test_that("cross-fitted DR estimator can estimate internal CBPS weights", {
   )))
 })
 
+test_that("cross-fitted DR estimator can estimate internal entropy-balance weights", {
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 8,
+    rank = 2,
+    beta = 0.85,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1268
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.2 + panel$x1[active]^2 + ifelse(panel$time[active] > stats::median(panel$time), 0.7, -0.1)
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "entropy_balance",
+    gps_model = "linear",
+    entropy_balance_iterations = 500L,
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 1,
+    seed = 1268
+  )
+
+  expect_s3_class(fit, "cdmc_dr_fit")
+  expect_identical(fit$weight_method, "entropy_balance")
+  expect_identical(fit$entropy_balance_degree, 1L)
+  expect_true(all(is.finite(fit$data$.cdmc_weight[fit$data$.cdmc_observed])))
+  expect_true(any(abs(fit$data$.cdmc_weight[fit$data$.cdmc_observed] - 1) > 1e-6))
+  expect_true(any(fit$data$.cdmc_dr_sample))
+  expect_true(all(vapply(
+    fit$baseline$fold_summaries,
+    function(summary) !is.null(summary$entropy_balance_max_abs_balance),
+    logical(1)
+  )))
+})
+
+test_that("cross-fitted DR estimator can estimate internal kernel-balance weights", {
+  panel <- simulate_cdmc_data(
+    n_units = 30,
+    n_times = 10,
+    rank = 2,
+    beta = 0.85,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.1,
+    switch_off_prob = 0.5,
+    seed = 1274
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.25 + sin(panel$x1[active]) + ifelse(panel$time[active] > stats::median(panel$time), 0.6, -0.1)
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "kernel_balance",
+    gps_model = "linear",
+    kernel_balance_centers = 6L,
+    kernel_balance_iterations = 400L,
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 1,
+    seed = 1274
+  )
+
+  expect_s3_class(fit, "cdmc_dr_fit")
+  expect_identical(fit$weight_method, "kernel_balance")
+  expect_identical(fit$kernel_balance_degree, 1L)
+  expect_identical(fit$kernel_balance_centers, 6L)
+  expect_true(all(is.finite(fit$data$.cdmc_weight[fit$data$.cdmc_observed])))
+  expect_true(any(abs(fit$data$.cdmc_weight[fit$data$.cdmc_observed] - 1) > 1e-6))
+  expect_true(any(fit$data$.cdmc_dr_sample))
+  expect_true(all(vapply(
+    fit$baseline$fold_summaries,
+    function(summary) !is.null(summary$kernel_balance_max_abs_balance),
+    logical(1)
+  )))
+})
+
+test_that("cross-fitted DR estimator can estimate internal adaptive-balance weights", {
+  panel <- simulate_cdmc_data(
+    n_units = 30,
+    n_times = 10,
+    rank = 2,
+    beta = 0.85,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.1,
+    switch_off_prob = 0.5,
+    seed = 1284
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.25 + sin(panel$x1[active]) + ifelse(panel$time[active] > stats::median(panel$time), 0.6, -0.1)
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "adaptive_balance",
+    adaptive_balance_methods = c("entropy_balance", "kernel_balance"),
+    gps_model = "linear",
+    kernel_balance_centers = 6L,
+    entropy_balance_iterations = 400L,
+    kernel_balance_iterations = 400L,
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 1,
+    seed = 1284
+  )
+
+  expect_s3_class(fit, "cdmc_dr_fit")
+  expect_identical(fit$weight_method, "adaptive_balance")
+  expect_identical(fit$adaptive_balance_methods, c("entropy_balance", "kernel_balance"))
+  expect_true(all(is.finite(fit$data$.cdmc_weight[fit$data$.cdmc_observed])))
+  expect_true(any(abs(fit$data$.cdmc_weight[fit$data$.cdmc_observed] - 1) > 1e-6))
+  expect_true(any(fit$data$.cdmc_dr_sample))
+  expect_true(all(vapply(
+    fit$baseline$fold_summaries,
+    function(summary) !is.null(summary$adaptive_balance_selected_method),
+    logical(1)
+  )))
+  expect_true(all(vapply(
+    fit$baseline$fold_summaries,
+    function(summary) is.data.frame(summary$adaptive_balance_candidate_scores),
+    logical(1)
+  )))
+})
+
 test_that("cross-fitted DR estimator can estimate internal gaussian GPS weights", {
   panel <- simulate_cdmc_data(
     n_units = 20,
@@ -248,6 +503,47 @@ test_that("internal gaussian GPS weighting works without covariates", {
   expect_s3_class(fit, "cdmc_dr_fit")
   expect_true(all(is.finite(fit$data$.cdmc_weight)))
   expect_true(any(fit$data$.cdmc_dr_sample))
+})
+
+test_that("cross-fitted DR print reports fold lambda tuning guidance", {
+  panel <- simulate_cdmc_data(
+    n_units = 10,
+    n_times = 8,
+    rank = 2,
+    beta = 0.85,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 12680
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "gaussian_gps",
+    n_folds = 2,
+    lambda = NULL,
+    rank_max = 2,
+    washout = 0,
+    lag_order = 0,
+    seed = 12680
+  )
+
+  output <- paste(capture.output(print(fit)), collapse = "\n")
+
+  expect_true(all(vapply(
+    fit$baseline$fold_summaries,
+    function(summary) identical(summary$lambda_method, "heuristic"),
+    logical(1)
+  )))
+  expect_match(output, 'lambda selection: heuristic', fixed = TRUE)
+  expect_match(output, 'empirical workflows should prefer lambda_selection = "cv"', fixed = TRUE)
 })
 
 test_that("internal spline Gaussian GPS weights support nonlinear assignment patterns", {
@@ -532,6 +828,159 @@ test_that("internal forest Gaussian GPS weights support interaction-heavy assign
     logical(1)
   )))
   expect_true(any(fit_forest$data$.cdmc_dr_sample))
+})
+
+test_that("internal stacked Gaussian GPS weights combine available nuisance learners", {
+  testthat::skip_if_not_installed("rpart")
+
+  panel <- simulate_cdmc_data(
+    n_units = 20,
+    n_times = 10,
+    rank = 2,
+    beta = 0.6,
+    lag_beta = NULL,
+    n_covariates = 2,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1567
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  interaction_score <- panel$x2 + panel$time / max(panel$time)
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.1 +
+      panel$x1[active]^2 +
+      ifelse(interaction_score[active] > stats::median(interaction_score), 0.6, -0.2)
+  )
+  panel$y <- panel$y + 0.5 * (panel$dose - original_dose)
+
+  fit_linear <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = c("x1", "x2"),
+    weight_method = "gaussian_gps",
+    gps_model = "linear",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1567
+  )
+
+  fit_stack <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = c("x1", "x2"),
+    weight_method = "gaussian_gps",
+    gps_model = "stack",
+    gps_stack_models = c("linear", "spline", "tree"),
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1567
+  )
+
+  expect_s3_class(fit_stack, "cdmc_dr_fit")
+  expect_identical(fit_stack$gps_model, "stack")
+  expect_identical(fit_stack$gps_stack_models, c("linear", "spline", "tree"))
+  expect_true(all(is.finite(fit_stack$data$.cdmc_weight)))
+  expect_true(any(vapply(
+    fit_stack$baseline$fold_summaries,
+    function(summary) identical(summary$gps_stack_models, c("linear", "spline", "tree")),
+    logical(1)
+  )))
+  expect_true(any(abs(fit_stack$data$.cdmc_weight - fit_linear$data$.cdmc_weight) > 1e-6, na.rm = TRUE))
+  expect_true(any(fit_stack$data$.cdmc_dr_sample))
+})
+
+test_that("internal boost Gaussian GPS weights support additive nonlinear assignment patterns", {
+  testthat::skip_if_not_installed("gbm")
+
+  panel <- simulate_cdmc_data(
+    n_units = 20,
+    n_times = 10,
+    rank = 2,
+    beta = 0.6,
+    lag_beta = NULL,
+    n_covariates = 2,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1573
+  )
+  original_dose <- panel$dose
+  active <- abs(original_dose) > 0
+  interaction_score <- panel$x2 + panel$time / max(panel$time)
+  panel$dose[active] <- sign(original_dose[active]) * (
+    0.15 +
+      panel$x1[active]^2 +
+      0.5 * interaction_score[active] +
+      0.25 * pmax(panel$x1[active], 0)
+  )
+  panel$y <- panel$y + 0.5 * (panel$dose - original_dose)
+
+  fit_linear <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = c("x1", "x2"),
+    weight_method = "gaussian_gps",
+    gps_model = "linear",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1573
+  )
+
+  fit_boost <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = c("x1", "x2"),
+    weight_method = "gaussian_gps",
+    gps_model = "boost",
+    gps_boost_trees = 40L,
+    gps_boost_depth = 2L,
+    gps_boost_shrinkage = 0.05,
+    gps_boost_min_obs_node = 3L,
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 1573
+  )
+
+  expect_s3_class(fit_boost, "cdmc_dr_fit")
+  expect_identical(fit_boost$gps_model, "boost")
+  expect_identical(fit_boost$gps_boost_trees, 40L)
+  expect_identical(fit_boost$gps_boost_depth, 2L)
+  expect_equal(fit_boost$gps_boost_shrinkage, 0.05)
+  expect_identical(fit_boost$gps_boost_min_obs_node, 3L)
+  expect_true(all(is.finite(fit_boost$data$.cdmc_weight)))
+  expect_true(any(abs(fit_boost$data$.cdmc_weight - fit_linear$data$.cdmc_weight) > 1e-6, na.rm = TRUE))
+  expect_true(all(vapply(
+    fit_boost$baseline$fold_summaries,
+    function(summary) identical(summary$gps_boost_trees, 40L),
+    logical(1)
+  )))
+  expect_true(any(fit_boost$data$.cdmc_dr_sample))
 })
 
 test_that("internal kernel GPS weights support non-Gaussian assignment patterns", {

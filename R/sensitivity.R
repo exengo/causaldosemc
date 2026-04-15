@@ -1,13 +1,42 @@
-cdmc_sensitivity_source_object <- function(object) {
-  if (!inherits(object, "cdmc_fit") &&
-      !inherits(object, "cdmc_dr_fit") &&
-      !inherits(object, "cdmc_dose_response") &&
-      !inherits(object, "cdmc_dynamic_estimand")) {
+cdmc_sensitivity_supported_classes <- function() {
+  c("cdmc_fit", "cdmc_dr_fit", "cdmc_dose_response", "cdmc_dynamic_estimand")
+}
+
+cdmc_sensitivity_first_class <- function(object, classes) {
+  matches <- vapply(classes, function(class_name) inherits(object, class_name), logical(1))
+  if (!any(matches)) {
+    return(NULL)
+  }
+
+  classes[[which(matches)[1L]]]
+}
+
+cdmc_sensitivity_target_class <- function(object) {
+  class_name <- cdmc_sensitivity_first_class(object, cdmc_sensitivity_supported_classes())
+  if (is.null(class_name)) {
     stop(
       "object must inherit from 'cdmc_fit', 'cdmc_dr_fit', 'cdmc_dose_response', or 'cdmc_dynamic_estimand'.",
       call. = FALSE
     )
   }
+
+  class_name
+}
+
+cdmc_sensitivity_source_class <- function(source_object) {
+  class_name <- cdmc_sensitivity_first_class(source_object, c("cdmc_fit", "cdmc_dr_fit"))
+  if (is.null(class_name)) {
+    stop(
+      "source_object must inherit from 'cdmc_fit' or 'cdmc_dr_fit'.",
+      call. = FALSE
+    )
+  }
+
+  class_name
+}
+
+cdmc_sensitivity_source_object <- function(object) {
+  cdmc_sensitivity_target_class(object)
 
   cdmc_bootstrap_source_object(object)
 }
@@ -32,22 +61,19 @@ cdmc_sensitivity_support_fraction <- function(observed_controls, eligible_contro
 }
 
 cdmc_sensitivity_fit_objective <- function(source_object) {
-  if (inherits(source_object, "cdmc_fit")) {
+  source_class <- cdmc_sensitivity_source_class(source_object)
+
+  if (identical(source_class, "cdmc_fit")) {
     return(source_object$objective %||% "staged")
   }
 
-  if (inherits(source_object, "cdmc_dr_fit")) {
-    return("dr")
-  }
-
-  stop(
-    "source_object must inherit from 'cdmc_fit' or 'cdmc_dr_fit'.",
-    call. = FALSE
-  )
+  "dr"
 }
 
 cdmc_sensitivity_optimization_sample <- function(source_object) {
-  if (inherits(source_object, "cdmc_fit") && identical(cdmc_sensitivity_fit_objective(source_object), "joint")) {
+  source_class <- cdmc_sensitivity_source_class(source_object)
+
+  if (identical(source_class, "cdmc_fit") && identical(cdmc_sensitivity_fit_objective(source_object), "joint")) {
     return("observed_panel")
   }
 
@@ -101,14 +127,30 @@ cdmc_sensitivity_default_dr_weight_scenario <- function(source_object) {
     gps_model = source_object$gps_model %||% "linear",
     gps_df = source_object$gps_df %||% 4L,
     gps_spline_covariates = source_object$gps_spline_covariates,
+    gps_stack_models = source_object$gps_stack_models %||% NULL,
     gps_bandwidth = source_object$gps_bandwidth %||% NULL,
     gps_forest_trees = source_object$gps_forest_trees %||% 200L,
     gps_forest_mtry = source_object$gps_forest_mtry %||% NULL,
     gps_forest_min_node_size = source_object$gps_forest_min_node_size %||% NULL,
+    gps_boost_trees = source_object$gps_boost_trees %||% 200L,
+    gps_boost_depth = source_object$gps_boost_depth %||% 2L,
+    gps_boost_shrinkage = source_object$gps_boost_shrinkage %||% 0.05,
+    gps_boost_min_obs_node = source_object$gps_boost_min_obs_node %||% 10L,
     cbps_standardize = source_object$cbps_standardize %||% TRUE,
     cbps_method = source_object$cbps_method %||% "over",
     cbps_iterations = source_object$cbps_iterations %||% 1000L,
     cbps_twostep = source_object$cbps_twostep %||% TRUE,
+    adaptive_balance_methods = source_object$adaptive_balance_methods %||% NULL,
+    entropy_balance_degree = source_object$entropy_balance_degree %||% 1L,
+    entropy_balance_standardize = source_object$entropy_balance_standardize %||% TRUE,
+    entropy_balance_iterations = source_object$entropy_balance_iterations %||% 1000L,
+    entropy_balance_reltol = source_object$entropy_balance_reltol %||% 1e-8,
+    kernel_balance_degree = source_object$kernel_balance_degree %||% 1L,
+    kernel_balance_centers = source_object$kernel_balance_centers %||% 25L,
+    kernel_balance_bandwidth = source_object$kernel_balance_bandwidth %||% NULL,
+    kernel_balance_standardize = source_object$kernel_balance_standardize %||% TRUE,
+    kernel_balance_iterations = source_object$kernel_balance_iterations %||% 1000L,
+    kernel_balance_reltol = source_object$kernel_balance_reltol %||% 1e-8,
     stabilize_weights = source_object$stabilize_weights,
     max_weight = source_object$max_weight,
     weight_mode = source_object$weight_method
@@ -125,14 +167,30 @@ cdmc_sensitivity_parse_dr_weight_spec <- function(source_object, spec) {
     "gps_model",
     "gps_df",
     "gps_spline_covariates",
+    "gps_stack_models",
     "gps_bandwidth",
     "gps_forest_trees",
     "gps_forest_mtry",
     "gps_forest_min_node_size",
+    "gps_boost_trees",
+    "gps_boost_depth",
+    "gps_boost_shrinkage",
+    "gps_boost_min_obs_node",
     "cbps_standardize",
     "cbps_method",
     "cbps_iterations",
     "cbps_twostep",
+    "adaptive_balance_methods",
+    "entropy_balance_degree",
+    "entropy_balance_standardize",
+    "entropy_balance_iterations",
+    "entropy_balance_reltol",
+    "kernel_balance_degree",
+    "kernel_balance_centers",
+    "kernel_balance_bandwidth",
+    "kernel_balance_standardize",
+    "kernel_balance_iterations",
+    "kernel_balance_reltol",
     "stabilize_weights",
     "max_weight"
   )
@@ -146,21 +204,70 @@ cdmc_sensitivity_parse_dr_weight_spec <- function(source_object, spec) {
     scenario$weight_method <- "external"
   }
 
-  scenario$weight_method <- match.arg(scenario$weight_method, c("external", "gaussian_gps", "kernel_gps", "cbps"))
-  scenario$gps_model <- match.arg(scenario$gps_model, c("linear", "spline", "gam", "tree", "forest"))
+  scenario$weight_method <- match.arg(scenario$weight_method, c("external", "gaussian_gps", "kernel_gps", "cbps", "entropy_balance", "kernel_balance", "adaptive_balance"))
+  scenario$gps_model <- match.arg(scenario$gps_model, c("linear", "spline", "gam", "tree", "forest", "stack", "boost"))
   scenario$gps_df <- as.integer(scenario$gps_df %||% 4L)
+  resolve_gps_stack_models <- get("cdmc_resolve_gps_stack_models", mode = "function")
+  scenario$gps_stack_models <- if (identical(scenario$gps_model, "stack")) {
+    resolve_gps_stack_models(scenario$gps_stack_models %||% NULL)
+  } else {
+    NULL
+  }
+  resolve_max_weight_spec <- get("cdmc_resolve_max_weight_spec", mode = "function")
+  resolve_adaptive_balance_methods <- get("cdmc_resolve_adaptive_balance_methods", mode = "function")
+  resolve_entropy_balance_degree <- get("cdmc_resolve_entropy_balance_degree", mode = "function")
+  resolve_entropy_balance_iterations <- get("cdmc_resolve_entropy_balance_iterations", mode = "function")
+  resolve_entropy_balance_reltol <- get("cdmc_resolve_entropy_balance_reltol", mode = "function")
+  resolve_kernel_balance_centers <- get("cdmc_resolve_kernel_balance_centers", mode = "function")
+  resolve_kernel_balance_bandwidth <- get("cdmc_resolve_kernel_balance_bandwidth", mode = "function")
+  scenario$adaptive_balance_methods <- if (identical(scenario$weight_method, "adaptive_balance")) {
+    resolve_adaptive_balance_methods(scenario$adaptive_balance_methods %||% NULL)
+  } else {
+    NULL
+  }
+  scenario$max_weight <- resolve_max_weight_spec(scenario$max_weight)
+  scenario$entropy_balance_degree <- resolve_entropy_balance_degree(scenario$entropy_balance_degree %||% 1L)
+  scenario$entropy_balance_iterations <- resolve_entropy_balance_iterations(scenario$entropy_balance_iterations %||% 1000L)
+  scenario$entropy_balance_reltol <- resolve_entropy_balance_reltol(scenario$entropy_balance_reltol %||% 1e-8)
+  scenario$kernel_balance_degree <- resolve_entropy_balance_degree(scenario$kernel_balance_degree %||% 1L)
+  scenario$kernel_balance_centers <- resolve_kernel_balance_centers(scenario$kernel_balance_centers %||% 25L)
+  scenario$kernel_balance_bandwidth <- resolve_kernel_balance_bandwidth(scenario$kernel_balance_bandwidth %||% NULL)
+  scenario$kernel_balance_iterations <- resolve_entropy_balance_iterations(scenario$kernel_balance_iterations %||% 1000L)
+  scenario$kernel_balance_reltol <- resolve_entropy_balance_reltol(scenario$kernel_balance_reltol %||% 1e-8)
+  if (!is.logical(scenario$entropy_balance_standardize) || length(scenario$entropy_balance_standardize) != 1L || is.na(scenario$entropy_balance_standardize)) {
+    stop("entropy_balance_standardize must be TRUE or FALSE.", call. = FALSE)
+  }
+  if (!is.logical(scenario$kernel_balance_standardize) || length(scenario$kernel_balance_standardize) != 1L || is.na(scenario$kernel_balance_standardize)) {
+    stop("kernel_balance_standardize must be TRUE or FALSE.", call. = FALSE)
+  }
+  if (identical(scenario$gps_model, "boost")) {
+    get("cdmc_assert_installed", mode = "function")("gbm")
+  }
+  if ((identical(scenario$gps_model, "gam") ||
+       (identical(scenario$gps_model, "stack") && "gam" %in% scenario$gps_stack_models)) &&
+      scenario$gps_df < 3L) {
+    stop("gps_df must be at least 3 when gps_model uses a GAM nuisance learner.", call. = FALSE)
+  }
   resolve_gps_bandwidth <- get("cdmc_resolve_gps_bandwidth", mode = "function")
   scenario$gps_bandwidth <- resolve_gps_bandwidth(scenario$gps_bandwidth %||% NULL)
   resolve_gps_forest_trees <- get("cdmc_resolve_gps_forest_trees", mode = "function")
   resolve_gps_forest_mtry <- get("cdmc_resolve_gps_forest_mtry", mode = "function")
   resolve_gps_forest_min_node_size <- get("cdmc_resolve_gps_forest_min_node_size", mode = "function")
+  resolve_gps_boost_trees <- get("cdmc_resolve_gps_boost_trees", mode = "function")
+  resolve_gps_boost_depth <- get("cdmc_resolve_gps_boost_depth", mode = "function")
+  resolve_gps_boost_shrinkage <- get("cdmc_resolve_gps_boost_shrinkage", mode = "function")
+  resolve_gps_boost_min_obs_node <- get("cdmc_resolve_gps_boost_min_obs_node", mode = "function")
   scenario$gps_forest_trees <- resolve_gps_forest_trees(scenario$gps_forest_trees %||% 200L)
   scenario$gps_forest_mtry <- resolve_gps_forest_mtry(scenario$gps_forest_mtry %||% NULL)
   scenario$gps_forest_min_node_size <- resolve_gps_forest_min_node_size(scenario$gps_forest_min_node_size %||% NULL)
+  scenario$gps_boost_trees <- resolve_gps_boost_trees(scenario$gps_boost_trees %||% 200L)
+  scenario$gps_boost_depth <- resolve_gps_boost_depth(scenario$gps_boost_depth %||% 2L)
+  scenario$gps_boost_shrinkage <- resolve_gps_boost_shrinkage(scenario$gps_boost_shrinkage %||% 0.05)
+  scenario$gps_boost_min_obs_node <- resolve_gps_boost_min_obs_node(scenario$gps_boost_min_obs_node %||% 10L)
 
-  if (identical(scenario$weight_method, "cbps") && !scenario$gps_model %in% c("linear", "spline")) {
+  if (scenario$weight_method %in% c("cbps", "entropy_balance", "kernel_balance", "adaptive_balance") && !scenario$gps_model %in% c("linear", "spline")) {
     stop(
-      "gps_model is not available for CBPS replay scenarios.",
+      "gps_model is not available for balancing-only replay scenarios.",
       call. = FALSE
     )
   }
@@ -186,8 +293,9 @@ cdmc_resolve_sensitivity_weight_specs <- function(object, source_object, weight_
   }
 
   named_specs <- cdmc_sensitivity_named_weight_specs(weight_specs)
+  source_class <- cdmc_sensitivity_source_class(source_object)
 
-  if (inherits(source_object, "cdmc_fit")) {
+  if (identical(source_class, "cdmc_fit")) {
     scenarios <- list(current = cdmc_sensitivity_fit_weight_scenario(source_object$weights %||% NULL))
 
     if (is.null(include_unweighted)) {
@@ -379,8 +487,9 @@ cdmc_sensitivity_target_statistics <- function(
   prediction_type = c("response", "slope")
 ) {
   prediction_type <- match.arg(prediction_type)
+  object_class <- cdmc_sensitivity_target_class(object)
 
-  if (inherits(object, "cdmc_dose_response") &&
+  if (identical(object_class, "cdmc_dose_response") &&
       "prediction" %in% statistics &&
       is.null(prediction_dose) &&
       is.null(prediction_history)) {
@@ -395,17 +504,17 @@ cdmc_sensitivity_target_statistics <- function(
     fit_error = NA_character_
   )
 
-  if (inherits(object, "cdmc_fit")) {
+  if (identical(object_class, "cdmc_fit")) {
     out$lambda <- object$lambda
     out$effective_rank <- object$baseline$effective_rank
     out$baseline_converged <- object$baseline$converged
-  } else if (inherits(object, "cdmc_dr_fit")) {
+  } else if (identical(object_class, "cdmc_dr_fit")) {
     out$lambda <- object$lambda
     out$dr_sample_cells <- sum(object$effect$sample_mask, na.rm = TRUE)
     out$n_folds <- object$n_folds
-  } else if (inherits(object, "cdmc_dose_response")) {
+  } else if (identical(object_class, "cdmc_dose_response")) {
     out$dose_response_sample_size <- nrow(object$history)
-  } else if (inherits(object, "cdmc_dynamic_estimand")) {
+  } else if (identical(object_class, "cdmc_dynamic_estimand")) {
     out$dynamic_path_count <- nrow(object$estimate_table)
   }
 
@@ -439,6 +548,8 @@ cdmc_sensitivity_reference_summary <- function(
   prediction_type = c("response", "slope")
 ) {
   prediction_type <- match.arg(prediction_type)
+  source_class <- cdmc_sensitivity_source_class(source_object)
+  target_class <- cdmc_sensitivity_target_class(object)
   support <- cdmc_sensitivity_support_summary(
     object = source_object,
     data = data,
@@ -449,8 +560,8 @@ cdmc_sensitivity_reference_summary <- function(
 
   reference <- c(
     list(
-      source_class = class(source_object)[1L],
-      target_class = class(object)[1L],
+      source_class = source_class,
+      target_class = target_class,
       objective = support$objective,
       optimization_sample = support$optimization_sample,
       weight_scenario = "current",
@@ -759,14 +870,30 @@ cdmc_sensitivity_fit_exclusions <- function(source_object) {
     "gps_model",
     "gps_df",
     "gps_spline_covariates",
+    "gps_stack_models",
     "gps_bandwidth",
     "gps_forest_trees",
     "gps_forest_mtry",
     "gps_forest_min_node_size",
+    "gps_boost_trees",
+    "gps_boost_depth",
+    "gps_boost_shrinkage",
+    "gps_boost_min_obs_node",
     "cbps_standardize",
     "cbps_method",
     "cbps_iterations",
     "cbps_twostep",
+    "adaptive_balance_methods",
+    "entropy_balance_degree",
+    "entropy_balance_standardize",
+    "entropy_balance_iterations",
+    "entropy_balance_reltol",
+    "kernel_balance_degree",
+    "kernel_balance_centers",
+    "kernel_balance_bandwidth",
+    "kernel_balance_standardize",
+    "kernel_balance_iterations",
+    "kernel_balance_reltol",
     "stabilize_weights",
     "max_weight",
     "washout",
@@ -811,14 +938,30 @@ cdmc_sensitivity_refit_source <- function(source_object, data, fit_spec, weight_
         gps_model = weight_scenario$gps_model,
         gps_df = weight_scenario$gps_df,
         gps_spline_covariates = weight_scenario$gps_spline_covariates,
+        gps_stack_models = weight_scenario$gps_stack_models,
         gps_bandwidth = weight_scenario$gps_bandwidth,
         gps_forest_trees = weight_scenario$gps_forest_trees,
         gps_forest_mtry = weight_scenario$gps_forest_mtry,
         gps_forest_min_node_size = weight_scenario$gps_forest_min_node_size,
+        gps_boost_trees = weight_scenario$gps_boost_trees,
+        gps_boost_depth = weight_scenario$gps_boost_depth,
+        gps_boost_shrinkage = weight_scenario$gps_boost_shrinkage,
+        gps_boost_min_obs_node = weight_scenario$gps_boost_min_obs_node,
         cbps_standardize = weight_scenario$cbps_standardize,
         cbps_method = weight_scenario$cbps_method,
         cbps_iterations = weight_scenario$cbps_iterations,
         cbps_twostep = weight_scenario$cbps_twostep,
+        adaptive_balance_methods = weight_scenario$adaptive_balance_methods,
+        entropy_balance_degree = weight_scenario$entropy_balance_degree,
+        entropy_balance_standardize = weight_scenario$entropy_balance_standardize,
+        entropy_balance_iterations = weight_scenario$entropy_balance_iterations,
+        entropy_balance_reltol = weight_scenario$entropy_balance_reltol,
+        kernel_balance_degree = weight_scenario$kernel_balance_degree,
+        kernel_balance_centers = weight_scenario$kernel_balance_centers,
+        kernel_balance_bandwidth = weight_scenario$kernel_balance_bandwidth,
+        kernel_balance_standardize = weight_scenario$kernel_balance_standardize,
+        kernel_balance_iterations = weight_scenario$kernel_balance_iterations,
+        kernel_balance_reltol = weight_scenario$kernel_balance_reltol,
         stabilize_weights = weight_scenario$stabilize_weights,
         max_weight = weight_scenario$max_weight,
         fold_assignments = source_object$fold_assignments %||% NULL
@@ -902,23 +1045,15 @@ cdmc_sensitivity_scan <- function(
   prediction_type = c("response", "slope"),
   verbose = FALSE
 ) {
-  if (!inherits(object, "cdmc_fit") &&
-      !inherits(object, "cdmc_dr_fit") &&
-      !inherits(object, "cdmc_dose_response") &&
-      !inherits(object, "cdmc_dynamic_estimand")) {
-    stop(
-      "object must inherit from 'cdmc_fit', 'cdmc_dr_fit', 'cdmc_dose_response', or 'cdmc_dynamic_estimand'.",
-      call. = FALSE
-    )
-  }
+  object_class <- cdmc_sensitivity_target_class(object)
 
   prediction_type <- match.arg(prediction_type)
 
-  if (!inherits(object, "cdmc_dr_fit") && (!is.null(contrast_history) || !is.null(reference_history))) {
+  if (!identical(object_class, "cdmc_dr_fit") && (!is.null(contrast_history) || !is.null(reference_history))) {
     stop("contrast_history and reference_history are only supported for cdmc_dr_fit sensitivity summaries.", call. = FALSE)
   }
 
-  if (!inherits(object, "cdmc_dose_response") && (!is.null(prediction_dose) || !is.null(prediction_history))) {
+  if (!identical(object_class, "cdmc_dose_response") && (!is.null(prediction_dose) || !is.null(prediction_history))) {
     stop("prediction_dose and prediction_history are only supported for cdmc_dose_response sensitivity summaries.", call. = FALSE)
   }
 
@@ -933,6 +1068,7 @@ cdmc_sensitivity_scan <- function(
   }
 
   source_object <- cdmc_sensitivity_source_object(object)
+  source_class <- cdmc_sensitivity_source_class(source_object)
   statistics <- cdmc_sensitivity_resolve_statistics(object, statistics = statistics)
   weight_scenarios <- cdmc_resolve_sensitivity_weight_specs(
     object = object,
@@ -1013,8 +1149,8 @@ cdmc_sensitivity_scan <- function(
     )
 
     row <- list(
-      source_class = class(source_object)[1L],
-      target_class = class(object)[1L],
+      source_class = source_class,
+      target_class = object_class,
       objective = support$objective,
       optimization_sample = support$optimization_sample,
       weight_scenario = weight_name,

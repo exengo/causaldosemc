@@ -102,6 +102,179 @@ test_that("dynamic estimands reproduce spline dose-response slopes", {
   )
 })
 
+test_that("dynamic estimands reproduce gam dose-response slopes", {
+  testthat::skip_if_not_installed("mgcv")
+
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 0.2,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 8291
+  )
+  panel$y <- panel$y + 0.8 * panel$dose^2
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 8291
+  )
+  dose_response <- cdmc_dose_response(
+    fit,
+    model = "gam",
+    lag_order = 0,
+    df = 4,
+    include_zero_dose = TRUE
+  )
+
+  history <- data.frame(dose_lag0 = c(-0.5, 0.5))
+  dynamic <- cdmc_dynamic_estimand(
+    dose_response,
+    history = history,
+    type = "slope",
+    aggregate = "both",
+    path_weights = c(1, 2)
+  )
+  manual <- predict(dose_response, history = history, type = "slope")$estimate
+
+  expect_s3_class(dynamic, "cdmc_dynamic_estimand")
+  expect_equal(dynamic$estimate_table$estimate, manual)
+  expect_equal(
+    unname(dynamic$estimates[["mean_dynamic_slope"]]),
+    stats::weighted.mean(manual, w = c(1, 2))
+  )
+})
+
+test_that("dynamic estimands reproduce tree dose-response responses", {
+  testthat::skip_if_not_installed("rpart")
+
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 0,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 8297
+  )
+  panel$y <- panel$y + ifelse(panel$dose > 0.25, 0.8, 0)
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 8297
+  )
+  dose_response <- cdmc_dose_response(
+    fit,
+    model = "tree",
+    lag_order = 0,
+    include_zero_dose = TRUE
+  )
+
+  history <- data.frame(dose_lag0 = c(0, 0.8))
+  dynamic <- cdmc_dynamic_estimand(
+    dose_response,
+    history = history,
+    type = "response",
+    aggregate = "both",
+    path_weights = c(1, 2)
+  )
+  manual <- predict(dose_response, history = history, type = "response")$estimate
+
+  expect_s3_class(dynamic, "cdmc_dynamic_estimand")
+  expect_equal(dynamic$estimate_table$estimate, manual)
+  expect_equal(
+    unname(dynamic$estimates[["mean_dynamic_response"]]),
+    stats::weighted.mean(manual, w = c(1, 2))
+  )
+})
+
+test_that("dynamic estimands reproduce forest dose-response responses", {
+  testthat::skip_if_not_installed("ranger")
+
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 10,
+    rank = 2,
+    beta = 0,
+    lag_beta = NULL,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    signed_dose = TRUE,
+    negative_dose_prob = 0.5,
+    seed = 8299
+  )
+  panel$y <- panel$y + ifelse(panel$dose > 0.25, 0.8, 0)
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 0,
+    seed = 8299
+  )
+  dose_response <- cdmc_dose_response(
+    fit,
+    model = "forest",
+    lag_order = 0,
+    forest_trees = 50,
+    include_zero_dose = TRUE
+  )
+
+  history <- data.frame(dose_lag0 = c(0, 0.8))
+  dynamic <- cdmc_dynamic_estimand(
+    dose_response,
+    history = history,
+    type = "response",
+    aggregate = "both",
+    path_weights = c(1, 2)
+  )
+  manual <- predict(dose_response, history = history, type = "response")$estimate
+
+  expect_s3_class(dynamic, "cdmc_dynamic_estimand")
+  expect_equal(dynamic$estimate_table$estimate, manual)
+  expect_equal(
+    unname(dynamic$estimates[["mean_dynamic_response"]]),
+    stats::weighted.mean(manual, w = c(1, 2))
+  )
+})
+
 test_that("dynamic estimands reproduce DR path contrasts", {
   panel <- simulate_cdmc_data(
     n_units = 18,
