@@ -1,4 +1,20 @@
+# Manuscript build artifacts
+literature-review.tex
 literature-review.aux
 literature-review.log
 literature-review.out
 literature-review.pdf
+
+# R session and build artifacts
+.Rhistory
+.RData
+.Rproj.user/
+*.Rcheck/
+
+# Editor settings
+.vscode/
+
+# Package build and scratch outputs
+/causaldosemc_*.tar.gz
+test_output.txt
+tests/testthat/test_results.txt
