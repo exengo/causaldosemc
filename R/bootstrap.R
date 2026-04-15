@@ -405,7 +405,7 @@ cdmc_bootstrap_prediction_statistics <- function(
   prediction_type = c("response", "slope")
 ) {
   prediction_type <- match.arg(prediction_type)
-  prediction <- predict(
+  prediction <- stats::predict(
     object,
     dose = prediction_dose,
     history = prediction_history,

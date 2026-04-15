@@ -51,6 +51,11 @@ simulate_cdmc_data <- function(
   for (unit_index in seq_len(n_units)) {
     exposed <- FALSE
     for (time_index in seq_len(n_times)) {
+      # Keep an untreated baseline cell for washout-sensitive example panels.
+      if (time_index == 1L) {
+        next
+      }
+
       if (!exposed && stats::runif(1) < switch_on_prob) {
         exposed <- TRUE
       } else if (exposed && stats::runif(1) < switch_off_prob) {

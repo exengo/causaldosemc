@@ -10,7 +10,6 @@ cdmc_assign_unit_folds <- function(unit_levels, n_folds) {
   shuffled_units <- sample(unit_levels)
   fold_sizes <- rep(length(unit_levels) %/% n_folds, n_folds)
   fold_sizes[seq_len(length(unit_levels) %% n_folds)] <- fold_sizes[seq_len(length(unit_levels) %% n_folds)] + 1L
-
   fold_id <- integer(length(unit_levels))
   names(fold_id) <- unit_levels
   start_index <- 1L
@@ -383,8 +382,8 @@ cdmc_fold_weight_diagnostic_row <- function(
       requested_max_weight = if (is.null(requested_max_weight)) NA_character_ else as.character(requested_max_weight),
       applied_max_weight = applied_max_weight %||% NA_real_
     ),
-    setNames(observed_summary, paste0("observed_", names(observed_summary))),
-    setNames(dr_sample_summary, paste0("dr_sample_", names(dr_sample_summary)))
+    stats::setNames(observed_summary, paste0("observed_", names(observed_summary))),
+    stats::setNames(dr_sample_summary, paste0("dr_sample_", names(dr_sample_summary)))
   )
 }
 
@@ -665,7 +664,7 @@ cdmc_predict_gps_mean_model <- function(object, newdata) {
     return(as.numeric(stats::predict(object, newdata = newdata, n.trees = object$n.trees, type = "response")))
   }
   if (inherits(object, "ranger")) {
-    return(as.numeric(predict(object, data = newdata)$predictions))
+    return(as.numeric(stats::predict(object, data = newdata)$predictions))
   }
 
   as.numeric(stats::predict(object, newdata = newdata))
@@ -1601,7 +1600,7 @@ cdmc_dr_fit <- function(
     fold_assignments = fold_assignments
   )
   n_folds <- length(unique(fold_assignments$fold))
-  fold_lookup <- setNames(fold_assignments$fold, fold_assignments$unit)
+  fold_lookup <- stats::setNames(fold_assignments$fold, fold_assignments$unit)
 
   baseline_oof <- matrix(NA_real_, nrow = full_prepared$n_units, ncol = full_prepared$n_times)
   tau_oof <- matrix(NA_real_, nrow = full_prepared$n_units, ncol = full_prepared$n_times)
@@ -1886,7 +1885,7 @@ cdmc_dr_fit <- function(
     holdout_reference_normalized <- NULL
     if (!identical(weight_method, "external")) {
       if (weight_method %in% c("cbps", "entropy_balance", "kernel_balance", "adaptive_balance")) {
-        reference_lookup <- setNames(
+        reference_lookup <- stats::setNames(
           holdout_gps_fit$raw_weights,
           paste(holdout_data$.cdmc_global_unit_index, holdout_data$.cdmc_global_time_index, sep = "\r")
         )

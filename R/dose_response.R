@@ -207,6 +207,7 @@ cdmc_fit_gam_dose_response <- function(history, lag_names, df = 4L, weights = NU
     )
   } else {
     gam_data$.cdmc_dose_response_weight <- as.numeric(weights)
+    .cdmc_dose_response_weight <- gam_data$.cdmc_dose_response_weight
     mgcv::gam(
       formula = formula,
       data = gam_data,
@@ -315,8 +316,8 @@ cdmc_fit_forest_dose_response <- function(
   )
 
   zero_history <- cdmc_named_numeric_data_frame(lag_names)
-  zero_reference <- as.numeric(predict(fit, data = zero_history)$predictions)
-  fitted_values <- as.numeric(predict(fit, data = history[, lag_names, drop = FALSE])$predictions) - zero_reference
+  zero_reference <- as.numeric(stats::predict(fit, data = zero_history)$predictions)
+  fitted_values <- as.numeric(stats::predict(fit, data = history[, lag_names, drop = FALSE])$predictions) - zero_reference
 
   list(
     coefficients = cdmc_forest_response_importance(fit, lag_names = lag_names),
@@ -557,7 +558,7 @@ cdmc_predict_dose_response_response <- function(object, prediction_history) {
 
   if (identical(object$model, "forest")) {
     return(
-      as.numeric(predict(object$model_fit, data = prediction_history)$predictions) -
+      as.numeric(stats::predict(object$model_fit, data = prediction_history)$predictions) -
         (object$zero_reference %||% 0)
     )
   }

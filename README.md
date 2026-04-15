@@ -37,7 +37,7 @@ remotes::install_local(".")
 From GitHub after publication:
 
 ```r
-remotes::install_github("<owner>/<repo>")
+remotes::install_github("exengo/causaldosemc")
 ```
 
 ## Quick start
@@ -121,6 +121,7 @@ articles locally.
 ## Development
 
 - Run package tests with `testthat::test_local()`.
+- Run a release-style package check from the repository root with `devtools::check(document = FALSE)`.
 - Build the source package from the repository root with `R CMD build .`.
 
 This repository tracks package source only. Local tarballs, ad hoc debugging

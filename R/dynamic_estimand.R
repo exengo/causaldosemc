@@ -196,7 +196,7 @@ cdmc_predict_dr_dynamic_response <- function(object, history) {
 
 cdmc_predict_dynamic_response <- function(object, history) {
   if (inherits(object, "cdmc_dose_response")) {
-    return(predict(object, history = history, type = "response")$estimate)
+    return(stats::predict(object, history = history, type = "response")$estimate)
   }
 
   if (inherits(object, "cdmc_fit")) {
@@ -231,7 +231,7 @@ cdmc_predict_fit_dynamic_slope <- function(object, history, eps) {
 
 cdmc_predict_dynamic_slope <- function(object, history, eps) {
   if (inherits(object, "cdmc_dose_response")) {
-    return(predict(object, history = history, type = "slope", eps = eps)$estimate)
+    return(stats::predict(object, history = history, type = "slope", eps = eps)$estimate)
   }
 
   if (inherits(object, "cdmc_fit")) {

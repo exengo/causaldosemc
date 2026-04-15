@@ -473,15 +473,15 @@ test_that("bootstrap supports forest dose-response fits and prediction functiona
 
 test_that("bootstrap supports DR fits with internal gaussian GPS weights", {
   panel <- simulate_cdmc_data(
-    n_units = 8,
+    n_units = 12,
     n_times = 8,
     rank = 2,
     beta = 0.9,
     lag_beta = 0.25,
     n_covariates = 1,
     noise_sd = 0.05,
-    switch_on_prob = 0.2,
-    switch_off_prob = 0.4,
+    switch_on_prob = 0.15,
+    switch_off_prob = 0.5,
     seed = 4040
   )
 
@@ -526,15 +526,15 @@ test_that("bootstrap supports DR fits with internal gaussian GPS weights", {
 
 test_that("bootstrap supports DR fits with internal spline Gaussian GPS weights", {
   panel <- simulate_cdmc_data(
-    n_units = 8,
+    n_units = 12,
     n_times = 8,
     rank = 2,
     beta = 0.6,
     lag_beta = NULL,
     n_covariates = 1,
     noise_sd = 0.05,
-    switch_on_prob = 0.2,
-    switch_off_prob = 0.4,
+    switch_on_prob = 0.15,
+    switch_off_prob = 0.5,
     seed = 4141
   )
   original_dose <- panel$dose
@@ -578,15 +578,15 @@ test_that("bootstrap supports DR fits with internal GAM Gaussian GPS weights", {
   testthat::skip_if_not_installed("mgcv")
 
   panel <- simulate_cdmc_data(
-    n_units = 8,
+    n_units = 12,
     n_times = 8,
     rank = 2,
     beta = 0.55,
     lag_beta = NULL,
     n_covariates = 1,
     noise_sd = 0.05,
-    switch_on_prob = 0.2,
-    switch_off_prob = 0.4,
+    switch_on_prob = 0.15,
+    switch_off_prob = 0.5,
     seed = 4191
   )
   original_dose <- panel$dose
@@ -856,15 +856,15 @@ test_that("bootstrap supports DR fits with boosted Gaussian GPS weights", {
 
 test_that("bootstrap supports DR fits with internal kernel GPS weights", {
   panel <- simulate_cdmc_data(
-    n_units = 8,
+    n_units = 12,
     n_times = 8,
     rank = 2,
     beta = 0.7,
     lag_beta = NULL,
     n_covariates = 1,
     noise_sd = 0.05,
-    switch_on_prob = 0.2,
-    switch_off_prob = 0.4,
+    switch_on_prob = 0.15,
+    switch_off_prob = 0.5,
     seed = 4343
   )
   original_dose <- panel$dose
@@ -1000,15 +1000,15 @@ test_that("bootstrap supports DR fits with internal entropy-balance weights", {
 
 test_that("bootstrap supports DR fits with internal kernel-balance weights", {
   panel <- simulate_cdmc_data(
-    n_units = 10,
+    n_units = 16,
     n_times = 8,
     rank = 2,
     beta = 0.75,
     lag_beta = NULL,
     n_covariates = 1,
     noise_sd = 0.04,
-    switch_on_prob = 0.2,
-    switch_off_prob = 0.4,
+    switch_on_prob = 0.15,
+    switch_off_prob = 0.5,
     seed = 4502
   )
   original_dose <- panel$dose

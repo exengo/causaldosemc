@@ -57,7 +57,9 @@ simulate_cdmc_data(
 \details{
 The function is intended for package examples, smoke tests, and development
 checks. It produces exact 0 doses when a unit is untreated and nonzero doses
-when a unit is exposed. When \code{signed_dose = TRUE}, active doses may be
+when a unit is exposed. The first period is always simulated at dose 0 for
+every unit so washout-sensitive workflows retain at least one eligible baseline
+control cell per unit. When \code{signed_dose = TRUE}, active doses may be
 positive or negative. The outcome is the sum of a low-rank untreated baseline,
 additive unit and time effects, optional observed covariates, a linear dose and
 lag effect, and Gaussian noise.

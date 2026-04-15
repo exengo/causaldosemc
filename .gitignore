@@ -16,5 +16,8 @@ literature-review.pdf
 
 # Package build and scratch outputs
 /causaldosemc_*.tar.gz
+rcmdcheck-*/
+test_output.log
 test_output.txt
+vignettes/*.html
 tests/testthat/test_results.txt

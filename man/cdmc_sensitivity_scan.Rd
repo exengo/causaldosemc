@@ -55,10 +55,10 @@ cdmc_sensitivity_scan(
   \code{cdmc_fit(weights = ...)}. For \code{cdmc_dr_fit} sources, each entry may
   either be a raw external weight specification or a named list overriding
   fields such as \code{weights}, \code{weight_method}, \code{gps_model},
-  \\code{gps_bandwidth}, \\code{gps_forest_trees}, \\code{gps_forest_mtry},
-  \\code{gps_forest_min_node_size}, \\code{cbps_method},
-  \\code{adaptive_balance_methods}, \\code{entropy_balance_degree},
-  \\code{kernel_balance_centers}, or related internal weighting replay
+  \code{gps_bandwidth}, \code{gps_forest_trees}, \code{gps_forest_mtry},
+  \code{gps_forest_min_node_size}, \code{cbps_method},
+  \code{adaptive_balance_methods}, \code{entropy_balance_degree},
+  \code{kernel_balance_centers}, or related internal weighting replay
   settings.}
 
   \item{include_unweighted}{Logical indicating whether an explicit unweighted

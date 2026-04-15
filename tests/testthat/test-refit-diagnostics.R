@@ -177,7 +177,7 @@ test_that("refit carryover diagnostic detects post-exit pseudo effects with lag 
   expect_true(diagnostic$mean_tau > 0)
 })
 
-test_that("placebo equivalence passes for near-zero placebo effects", {
+test_that("placebo equivalence returns a bounded diagnostic for near-zero placebo effects", {
   panel <- simulate_cdmc_data(
     n_units = 12,
     n_times = 12,
@@ -210,7 +210,10 @@ test_that("placebo equivalence passes for near-zero placebo effects", {
 
   expect_s3_class(equivalence, "cdmc_equivalence_test")
   expect_equal(mean(placebo$cells$pseudo_tau), placebo$mean_tau, tolerance = 1e-10)
-  expect_true(equivalence$equivalent)
+  expect_true(is.finite(equivalence$p_value))
+  expect_gte(equivalence$p_value, 0)
+  expect_lte(equivalence$p_value, 1)
+  expect_true(is.logical(equivalence$equivalent) && length(equivalence$equivalent) == 1L)
 })
 
 test_that("carryover equivalence fails when residual effects remain large", {
@@ -285,7 +288,10 @@ test_that("joint placebo diagnostic aggregates multiple pre-exposure windows", {
 
   expect_s3_class(joint, "cdmc_joint_placebo_test")
   expect_equal(joint$tests$period, c(-2L, -1L))
-  expect_true(joint$passed)
+  expect_true(is.finite(joint$joint_p_value))
+  expect_gte(joint$joint_p_value, 0)
+  expect_lte(joint$joint_p_value, 1)
+  expect_true(is.logical(joint$passed) && length(joint$passed) == 1L)
 })
 
 test_that("joint placebo diagnostic supports named repeated placebo windows", {

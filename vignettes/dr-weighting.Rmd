@@ -24,13 +24,13 @@ set `washout = 0`.
 
 ```{r}
 panel <- simulate_cdmc_data(
-  n_units = 18,
+  n_units = 24,
   n_times = 10,
   beta = 0.85,
   lag_beta = 0.2,
   noise_sd = 0.05,
-  switch_on_prob = 0.17,
-  switch_off_prob = 0.4,
+  switch_on_prob = 0.12,
+  switch_off_prob = 0.5,
   seed = 303
 )
 
@@ -60,7 +60,7 @@ dr_gps <- cdmc_dr_fit(
   n_folds = 2L,
   lambda = 0.18,
   washout = 0,
-  lag_order = 1,
+  lag_order = 0,
   rank_max = 3,
   seed = 303
 )
@@ -86,7 +86,7 @@ if (requireNamespace("mgcv", quietly = TRUE)) {
     n_folds = 2L,
     lambda = 0.18,
     washout = 0,
-    lag_order = 1,
+    lag_order = 0,
     rank_max = 3,
     seed = 303
   )
@@ -95,28 +95,28 @@ if (requireNamespace("mgcv", quietly = TRUE)) {
 }
 ```
 
-## Fit DR with internal adaptive balancing weights
+## Fit DR with internal kernel-balance weights
 
 ```{r}
-dr_adaptive <- cdmc_dr_fit(
+dr_balance <- cdmc_dr_fit(
   data = panel,
   outcome = "y",
   dose = "dose",
   unit = "unit",
   time = "time",
   covariates = "x1",
-  weight_method = "adaptive_balance",
-  adaptive_balance_methods = c("entropy_balance", "kernel_balance"),
+  weight_method = "kernel_balance",
   kernel_balance_centers = 6L,
+  kernel_balance_iterations = 400L,
   n_folds = 2L,
   lambda = 0.18,
   washout = 0,
-  lag_order = 1,
+  lag_order = 0,
   rank_max = 3,
   seed = 303
 )
 
-dr_adaptive
+dr_balance
 ```
 
 ## Reuse external balancing weights
@@ -144,7 +144,7 @@ dr_external <- cdmc_dr_fit(
   n_folds = 2L,
   lambda = 0.18,
   washout = 0,
-  lag_order = 1,
+  lag_order = 0,
   rank_max = 3,
   seed = 303
 )
@@ -156,11 +156,11 @@ dr_external
 
 ```{r}
 dr_boot <- cdmc_bootstrap(
-  dr_adaptive,
+  dr_balance,
   n_boot = 10,
   statistics = c("coefficients", "average_tau_dr", "dose_contrast_dr"),
-  contrast_history = c(dose_lag0 = 1, dose_lag1 = 0.5),
-  reference_history = c(dose_lag0 = 0, dose_lag1 = 0),
+  contrast_history = c(dose_lag0 = 1),
+  reference_history = c(dose_lag0 = 0),
   seed = 303
 )
 
@@ -171,7 +171,7 @@ dr_boot$summary
 
 ```{r}
 dr_scan <- cdmc_sensitivity_scan(
-  dr_adaptive,
+  dr_balance,
   washout_grid = 0:1,
   weight_specs = list(
     gaussian_linear = list(

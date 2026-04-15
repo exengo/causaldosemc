@@ -42,3 +42,17 @@ test_that("cdmc_fit supports signed doses with zero as the control state", {
   expect_true(any(panel$dose < 0))
   expect_true(any(abs(fit$dose_matrix) > fit$zero_tolerance))
 })
+
+test_that("simulate_cdmc_data preserves per-unit washout support", {
+  panel <- simulate_cdmc_data(n_units = 12, n_times = 12, beta = 1, lag_beta = 0.1, seed = 927)
+
+  dose_matrix <- matrix(panel$dose, nrow = 12, ncol = 12, byrow = TRUE)
+  eligible_mask <- causaldosemc:::cdmc_build_eligible_mask(
+    dose_matrix = dose_matrix,
+    zero_tolerance = 1e-8,
+    washout = 1
+  )
+
+  expect_true(all(panel$dose[panel$time == 1L] == 0))
+  expect_true(all(rowSums(eligible_mask) > 0L))
+})

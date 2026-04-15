@@ -22,7 +22,14 @@ cdmc_dose_response(
 
 \method{print}{cdmc_dose_response}(x, ...)
 
-\method{predict}{cdmc_dose_response}(object, dose = NULL, history = NULL, type = c("response", "slope"), eps = 1e-4, ...)
+\method{predict}{cdmc_dose_response}(
+  object,
+  dose = NULL,
+  history = NULL,
+  type = c("response", "slope"),
+  eps = 1e-4,
+  ...
+)
 }
 \arguments{
   \item{object}{A fitted \code{cdmc_fit} object for \code{cdmc_dose_response()},
@@ -121,7 +128,13 @@ predicted response or slope.
 }
 \examples{
 \donttest{
-panel <- simulate_cdmc_data(n_units = 12, n_times = 10, beta = 1, lag_beta = 0.2, seed = 1)
+panel <- simulate_cdmc_data(
+  n_units = 12,
+  n_times = 10,
+  beta = 1,
+  lag_beta = 0.2,
+  seed = 1
+)
 fit <- cdmc_fit(
   data = panel,
   outcome = "y",
@@ -144,7 +157,12 @@ predict(dr_gam, dose = c(0, 0.5, 1, 1.5))
 dr_tree <- cdmc_dose_response(fit, model = "tree", lag_order = 1)
 predict(dr_tree, dose = c(0, 0.5, 1, 1.5))
 
-dr_forest <- cdmc_dose_response(fit, model = "forest", lag_order = 1, forest_trees = 200)
+dr_forest <- cdmc_dose_response(
+  fit,
+  model = "forest",
+  lag_order = 1,
+  forest_trees = 200
+)
 predict(dr_forest, dose = c(0, 0.5, 1, 1.5))
 }
 }

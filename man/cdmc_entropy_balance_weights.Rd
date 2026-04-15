@@ -104,8 +104,20 @@ pre- and post-weighted balance moments.
 }
 \examples{
 \donttest{
-panel <- simulate_cdmc_data(n_units = 12, n_times = 10, beta = 1, lag_beta = 0.2, seed = 1)
-w <- cdmc_entropy_balance_weights(panel, dose = "dose", covariates = "x1", time = "time", time_effects = TRUE)
+panel <- simulate_cdmc_data(
+  n_units = 12,
+  n_times = 10,
+  beta = 1,
+  lag_beta = 0.2,
+  seed = 1
+)
+w <- cdmc_entropy_balance_weights(
+  panel,
+  dose = "dose",
+  covariates = "x1",
+  time = "time",
+  time_effects = TRUE
+)
 
 fit <- cdmc_fit(
   data = panel,
