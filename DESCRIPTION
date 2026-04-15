@@ -5,7 +5,7 @@ Authors@R:
     person(given = "Mikael",
            family = "Eriksson",
            role = c("aut", "cre"),
-           email = "mikael.eriksson@exi.app")
+           email = "github@exi.app")
 Description: Experimental tools for matrix-completion-based causal estimation
     in panel data with reversible continuous treatment and zero as the control
     state. The package combines zero-dose masking, washout handling, low-rank
@@ -15,7 +15,6 @@ Description: Experimental tools for matrix-completion-based causal estimation
     empirical and methodological workflows.
 License: MIT + file LICENSE
 Encoding: UTF-8
-LazyData: true
 Imports:
     softImpute,
     stats
