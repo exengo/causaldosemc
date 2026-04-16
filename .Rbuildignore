@@ -5,6 +5,7 @@
 ^\.gitignore$
 ^LICENSE\.md$
 ^literature-review\.(tex|aux|log|out|pdf)$
+^methodology\.(tex|aux|log|out|pdf)$
 ^rcmdcheck-.*$
 ^test_output\.(log|txt)$
 ^causaldosemc_[0-9.]+\.tar\.gz$

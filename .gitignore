@@ -4,6 +4,10 @@ literature-review.aux
 literature-review.log
 literature-review.out
 literature-review.pdf
+methodology.tex
+methodology.aux
+methodology.log
+methodology.out
 
 # R session and build artifacts
 .Rhistory
