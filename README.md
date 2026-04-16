@@ -115,6 +115,10 @@ stable blocked tuning exercise.
 - [Dose-response and dynamic estimands](vignettes/dose-response-dynamics.Rmd)
 - [Manuscript-style case study](vignettes/policy-case-study.Rmd)
 
+## Methodology note
+
+- [Methodology specification (PDF)](methodology.pdf)
+
 After installation, run `browseVignettes("causaldosemc")` to open the rendered
 articles locally.
 
