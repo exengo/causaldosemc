@@ -324,6 +324,99 @@ test_that("sensitivity scan summarizes washout and weight scenarios", {
   expect_s3_class(summary(scan), "summary.cdmc_sensitivity_scan")
 })
 
+test_that("sensitivity scan validates workers argument", {
+  panel <- simulate_cdmc_data(
+    n_units = 8,
+    n_times = 8,
+    rank = 2,
+    beta = 1,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 1131
+  )
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 1,
+    lag_order = 1,
+    seed = 1131
+  )
+
+  expect_error(
+    cdmc_sensitivity_scan(fit, washout_grid = 0:1, workers = 0),
+    "workers must be a positive integer"
+  )
+  expect_error(
+    cdmc_sensitivity_scan(fit, washout_grid = 0:1, workers = 1.5),
+    "workers must be a positive integer"
+  )
+})
+
+test_that("sensitivity scan parallel replay matches sequential replay", {
+  skip_on_os("windows")
+
+  panel <- simulate_cdmc_data(
+    n_units = 8,
+    n_times = 8,
+    rank = 2,
+    beta = 1,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 1141
+  )
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 1,
+    lag_order = 1,
+    seed = 1141
+  )
+
+  scan_seq <- cdmc_sensitivity_scan(
+    fit,
+    washout_grid = 0:1,
+    zero_tolerance_grid = fit$zero_tolerance,
+    include_unweighted = TRUE,
+    workers = 1
+  )
+  scan_par <- cdmc_sensitivity_scan(
+    fit,
+    washout_grid = 0:1,
+    zero_tolerance_grid = fit$zero_tolerance,
+    include_unweighted = TRUE,
+    workers = 2
+  )
+
+  expect_false(isTRUE(scan_seq$parallel))
+  expect_equal(scan_seq$workers, 1L)
+  expect_true(isTRUE(scan_par$parallel))
+  expect_equal(scan_par$workers, 2L)
+  expect_equal(scan_seq$results, scan_par$results)
+  expect_equal(scan_seq$support_summary, scan_par$support_summary)
+  expect_equal(scan_seq$washout_summary, scan_par$washout_summary)
+  expect_equal(scan_seq$weight_summary, scan_par$weight_summary)
+})
+
 test_that("sensitivity scan records support failures without stopping", {
   panel <- expand.grid(
     unit = paste0("u", 1:4),

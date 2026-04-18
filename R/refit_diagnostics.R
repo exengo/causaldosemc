@@ -87,6 +87,7 @@ cdmc_refit_baseline <- function(object, drop_mask, rerun_tuning = FALSE, verbose
     lambda_min_ratio = fit_control$lambda_min_ratio %||% 0.05,
     cv_rounds = fit_control$cv_rounds %||% 5L,
     cv_block_size = fit_control$cv_block_size %||% 2L,
+    cv_workers = fit_control$cv_workers %||% 1L,
     rank_max = rank_max,
     outer_maxit = fit_control$outer_maxit,
     fe_maxit = fit_control$fe_maxit,

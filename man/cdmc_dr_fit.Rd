@@ -60,6 +60,7 @@ cdmc_dr_fit(
   lambda_min_ratio = 0.05,
   cv_rounds = 5L,
   cv_block_size = 2L,
+  cv_workers = 1L,
   washout = 0L,
   lag_order = 0L,
   outer_maxit = 20L,
@@ -282,14 +283,16 @@ cdmc_dr_fit(
   are needed for replay or formal sensitivity routines.}
 
   \item{lambda, rank_max, lambda_fraction, lambda_selection, lambda_grid,
-  nlambda, lambda_min_ratio, cv_rounds, cv_block_size, washout, lag_order,
+  nlambda, lambda_min_ratio, cv_rounds, cv_block_size, cv_workers, washout, lag_order,
   outer_maxit, fe_maxit, soft_maxit, tol, fe_tol, zero_tolerance, seed,
   verbose}{Passed through to the fold-specific \code{cdmc_fit()} calls. The
   built-in second stage is always linear in the contemporaneous and lagged
   doses. For empirical workflows with enough zero-dose support inside each
   training fold, prefer \code{lambda = NULL} together with
   \code{lambda_selection = "cv"} so each fold reuses the blocked
-  cross-validation tuning rule rather than the heuristic fallback.}
+  cross-validation tuning rule rather than the heuristic fallback. Use
+  \code{cv_workers > 1} to parallelize lambda-candidate scoring within each
+  fold's blocked cross-validation routine on supported platforms.}
 
   \item{x}{A \code{cdmc_dr_fit} object.}
 

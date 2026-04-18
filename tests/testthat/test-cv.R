@@ -39,6 +39,128 @@ test_that("cdmc_fit can tune lambda with blocked cross-validation", {
   expect_true(all(fit$lambda_tuning$holdout_counts > 0))
 })
 
+test_that("cdmc_fit validates cv_workers", {
+  panel <- simulate_cdmc_data(
+    n_units = 8,
+    n_times = 8,
+    rank = 2,
+    beta = 0.9,
+    lag_beta = 0.25,
+    n_covariates = 1,
+    noise_sd = 0.05,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 109
+  )
+
+  expect_error(
+    cdmc_fit(
+      data = panel,
+      outcome = "y",
+      dose = "dose",
+      unit = "unit",
+      time = "time",
+      covariates = "x1",
+      lambda = NULL,
+      lambda_selection = "cv",
+      lambda_grid = c(0.4, 0.2),
+      cv_rounds = 2,
+      cv_block_size = 1,
+      cv_workers = 0,
+      rank_max = 3,
+      washout = 1,
+      lag_order = 1,
+      seed = 109
+    ),
+    "cv_workers must be a positive integer"
+  )
+
+  expect_error(
+    cdmc_fit(
+      data = panel,
+      outcome = "y",
+      dose = "dose",
+      unit = "unit",
+      time = "time",
+      covariates = "x1",
+      lambda = NULL,
+      lambda_selection = "cv",
+      lambda_grid = c(0.4, 0.2),
+      cv_rounds = 2,
+      cv_block_size = 1,
+      cv_workers = 1.5,
+      rank_max = 3,
+      washout = 1,
+      lag_order = 1,
+      seed = 109
+    ),
+    "cv_workers must be a positive integer"
+  )
+})
+
+test_that("cdmc_fit parallel cv tuning matches sequential tuning", {
+  skip_on_os("windows")
+
+  panel <- simulate_cdmc_data(
+    n_units = 10,
+    n_times = 9,
+    rank = 2,
+    beta = 0.9,
+    lag_beta = 0.25,
+    n_covariates = 1,
+    noise_sd = 0.05,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 209
+  )
+
+  fit_seq <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = NULL,
+    lambda_selection = "cv",
+    lambda_grid = c(0.4, 0.2, 0.1),
+    cv_rounds = 2,
+    cv_block_size = 1,
+    cv_workers = 1,
+    rank_max = 3,
+    washout = 1,
+    lag_order = 1,
+    seed = 209
+  )
+
+  fit_par <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = NULL,
+    lambda_selection = "cv",
+    lambda_grid = c(0.4, 0.2, 0.1),
+    cv_rounds = 2,
+    cv_block_size = 1,
+    cv_workers = 2,
+    rank_max = 3,
+    washout = 1,
+    lag_order = 1,
+    seed = 209
+  )
+
+  expect_equal(fit_seq$lambda, fit_par$lambda)
+  expect_equal(fit_seq$lambda_tuning$scores, fit_par$lambda_tuning$scores)
+  expect_equal(fit_seq$lambda_tuning$mean_scores, fit_par$lambda_tuning$mean_scores)
+  expect_false(isTRUE(fit_seq$lambda_tuning$cv_parallel))
+  expect_true(isTRUE(fit_par$lambda_tuning$cv_parallel))
+  expect_equal(fit_seq$lambda_tuning$cv_workers, 1L)
+  expect_equal(fit_par$lambda_tuning$cv_workers, 2L)
+})
+
 test_that("cdmc_fit can tune lambda with observation weights", {
   panel <- simulate_cdmc_data(
     n_units = 10,

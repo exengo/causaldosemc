@@ -39,6 +39,95 @@ test_that("bootstrap inference returns coefficient summaries", {
   expect_true(all(c("coef_dose_lag0", "coef_dose_lag1", "mean_tau_active_dose") %in% boot$summary$statistic))
 })
 
+test_that("bootstrap validates workers argument", {
+  panel <- simulate_cdmc_data(
+    n_units = 6,
+    n_times = 6,
+    rank = 2,
+    beta = 0.7,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.05,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 151
+  )
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 1,
+    lag_order = 1,
+    seed = 151
+  )
+
+  expect_error(
+    cdmc_bootstrap(fit, n_boot = 2, workers = 0),
+    "workers must be a positive integer"
+  )
+  expect_error(
+    cdmc_bootstrap(fit, n_boot = 2, workers = 1.5),
+    "workers must be a positive integer"
+  )
+})
+
+test_that("bootstrap parallel path is deterministic with fixed seed", {
+  skip_on_os("windows")
+
+  panel <- simulate_cdmc_data(
+    n_units = 6,
+    n_times = 6,
+    rank = 2,
+    beta = 0.9,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.05,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 161
+  )
+
+  fit <- cdmc_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 1,
+    lag_order = 1,
+    seed = 161
+  )
+
+  boot_one <- cdmc_bootstrap(
+    fit,
+    n_boot = 3,
+    workers = 2,
+    statistics = c("coefficients", "average_tau"),
+    seed = 919191
+  )
+  boot_two <- cdmc_bootstrap(
+    fit,
+    n_boot = 3,
+    workers = 2,
+    statistics = c("coefficients", "average_tau"),
+    seed = 919191
+  )
+
+  expect_true(isTRUE(boot_one$parallel))
+  expect_equal(boot_one$workers, 2L)
+  expect_equal(boot_one$draws, boot_two$draws)
+  expect_equal(boot_one$summary, boot_two$summary)
+})
+
 test_that("bootstrap preserves joint-objective fit specifications", {
   panel <- simulate_cdmc_data(
     n_units = 8,

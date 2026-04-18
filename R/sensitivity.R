@@ -1043,6 +1043,7 @@ cdmc_sensitivity_scan <- function(
   prediction_dose = NULL,
   prediction_history = NULL,
   prediction_type = c("response", "slope"),
+  workers = 1L,
   verbose = FALSE
 ) {
   object_class <- cdmc_sensitivity_target_class(object)
@@ -1066,6 +1067,11 @@ cdmc_sensitivity_scan <- function(
   if (length(zero_tolerance_grid) < 1L || any(!is.finite(zero_tolerance_grid)) || any(zero_tolerance_grid < 0)) {
     stop("zero_tolerance_grid must contain one or more nonnegative numeric values.", call. = FALSE)
   }
+
+  if (!is.numeric(workers) || length(workers) != 1L || !is.finite(workers) || workers < 1 || workers != floor(workers)) {
+    stop("workers must be a positive integer.", call. = FALSE)
+  }
+  workers <- as.integer(workers)
 
   source_object <- cdmc_sensitivity_source_object(object)
   source_class <- cdmc_sensitivity_source_class(source_object)
@@ -1103,9 +1109,18 @@ cdmc_sensitivity_scan <- function(
     zero_tolerance = zero_tolerance_grid,
     stringsAsFactors = FALSE
   )
-  rows <- vector("list", nrow(scenario_grid))
+  use_parallel <- workers > 1L
+  if (use_parallel && identical(.Platform$OS.type, "windows")) {
+    warning(
+      "Parallel sensitivity scan currently uses multicore execution and is not available on Windows. Falling back to sequential execution.",
+      call. = FALSE
+    )
+    use_parallel <- FALSE
+    workers <- 1L
+  }
+  worker_count <- if (use_parallel) min(workers, nrow(scenario_grid)) else 1L
 
-  for (scenario_index in seq_len(nrow(scenario_grid))) {
+  run_sensitivity_scenario <- function(scenario_index) {
     weight_name <- scenario_grid$weight_scenario[[scenario_index]]
     washout <- scenario_grid$washout[[scenario_index]]
     zero_tolerance <- scenario_grid$zero_tolerance[[scenario_index]]
@@ -1173,8 +1188,7 @@ cdmc_sensitivity_scan <- function(
     if (!isTRUE(support$support_ok)) {
       row$fit_success <- FALSE
       row$fit_error <- support$support_error
-      rows[[scenario_index]] <- row
-      next
+      return(list(index = scenario_index, row = row))
     }
 
     current_fit <- tryCatch(
@@ -1192,8 +1206,7 @@ cdmc_sensitivity_scan <- function(
     if (inherits(current_fit, "error")) {
       row$fit_success <- FALSE
       row$fit_error <- conditionMessage(current_fit)
-      rows[[scenario_index]] <- row
-      next
+      return(list(index = scenario_index, row = row))
     }
 
     target_object <- tryCatch(
@@ -1204,8 +1217,7 @@ cdmc_sensitivity_scan <- function(
     if (inherits(target_object, "error")) {
       row$fit_success <- FALSE
       row$fit_error <- conditionMessage(target_object)
-      rows[[scenario_index]] <- row
-      next
+      return(list(index = scenario_index, row = row))
     }
 
     target_statistics <- tryCatch(
@@ -1224,11 +1236,30 @@ cdmc_sensitivity_scan <- function(
     if (inherits(target_statistics, "error")) {
       row$fit_success <- FALSE
       row$fit_error <- conditionMessage(target_statistics)
-      rows[[scenario_index]] <- row
-      next
+      return(list(index = scenario_index, row = row))
     }
 
-    rows[[scenario_index]] <- c(row, target_statistics)
+    list(index = scenario_index, row = c(row, target_statistics))
+  }
+
+  if (use_parallel && verbose) {
+    message(sprintf("running sensitivity scan in parallel with %d workers", worker_count))
+  }
+
+  scenario_results <- if (use_parallel) {
+    parallel::mclapply(
+      seq_len(nrow(scenario_grid)),
+      run_sensitivity_scenario,
+      mc.cores = worker_count,
+      mc.set.seed = TRUE
+    )
+  } else {
+    lapply(seq_len(nrow(scenario_grid)), run_sensitivity_scenario)
+  }
+
+  rows <- vector("list", nrow(scenario_grid))
+  for (scenario_result in scenario_results) {
+    rows[[scenario_result$index]] <- scenario_result$row
   }
 
   results <- cdmc_sensitivity_augment_results(cdmc_sensitivity_bind_rows(rows), reference = reference)
@@ -1237,6 +1268,8 @@ cdmc_sensitivity_scan <- function(
     call = match.call(),
     statistics = statistics,
     rerun_tuning = fit_spec$rerun_tuning,
+    workers = worker_count,
+    parallel = use_parallel,
     results = results,
     reference = reference,
     support_summary = cdmc_sensitivity_support_table(results),
@@ -1363,6 +1396,7 @@ print.cdmc_sensitivity_scan <- function(x, ...) {
   cat("causaldosemc sensitivity scan\n")
   cat(sprintf("  scenarios evaluated: %d\n", nrow(x$results)))
   cat(sprintf("  successful fits: %d\n", sum(as.logical(x$results$fit_success), na.rm = TRUE)))
+  cat(sprintf("  execution mode: %s (%d worker%s)\n", if (isTRUE(x$parallel)) "parallel" else "sequential", x$workers %||% 1L, if ((x$workers %||% 1L) == 1L) "" else "s"))
   cat(sprintf("  rerun tuning: %s\n", if (x$rerun_tuning) "yes" else "no"))
 
   print(summary(x), ...)

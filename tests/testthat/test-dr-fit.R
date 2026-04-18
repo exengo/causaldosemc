@@ -37,6 +37,41 @@ test_that("cross-fitted DR estimator returns linear lag coefficients", {
   expect_true(sum(fit$effect$sample_mask, na.rm = TRUE) > 0)
 })
 
+test_that("cross-fitted DR estimator validates cv_workers", {
+  panel <- simulate_cdmc_data(
+    n_units = 8,
+    n_times = 8,
+    rank = 2,
+    beta = 0.8,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1121
+  )
+
+  expect_error(
+    cdmc_dr_fit(
+      data = panel,
+      outcome = "y",
+      dose = "dose",
+      unit = "unit",
+      time = "time",
+      covariates = "x1",
+      weight_method = "gaussian_gps",
+      n_folds = 2,
+      lambda = 0.2,
+      rank_max = 2,
+      washout = 0,
+      lag_order = 1,
+      cv_workers = 0,
+      seed = 1121
+    ),
+    "cv_workers must be a positive integer"
+  )
+})
+
 test_that("cross-fitted DR estimator reuses supplied fold assignments deterministically", {
   panel <- simulate_cdmc_data(
     n_units = 12,

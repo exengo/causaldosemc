@@ -26,6 +26,7 @@ cdmc_sensitivity_scan(
   prediction_dose = NULL,
   prediction_history = NULL,
   prediction_type = c("response", "slope"),
+  workers = 1L,
   verbose = FALSE
 )
 
@@ -97,6 +98,11 @@ cdmc_sensitivity_scan(
   \item{prediction_type}{Prediction target used when replaying
   \code{"prediction"} summaries for a \code{cdmc_dose_response} object.}
 
+  \item{workers}{Number of workers used to evaluate sensitivity scenarios.
+  Set \code{workers = 1} for sequential execution (default). Values greater
+  than 1 enable parallel scenario replay via multicore execution on supported
+  platforms.}
+
   \item{verbose}{Logical flag indicating whether replay progress messages should
   be printed.}
 
@@ -139,6 +145,10 @@ going instead of stopping the whole scan. This makes it useful for checking how
 fragile the estimator is to more aggressive washout choices, alternative
 zero-dose thresholds, or alternative weighting configurations.
 
+When \code{workers > 1}, sensitivity scenarios are evaluated in parallel and
+then reassembled in the original scenario-grid order before summaries are
+constructed.
+
 In addition to the row-level replay table, the returned object stores the
 stored-fit reference scenario, a compact support table with both zero-dose and
 optimization-sample summaries plus reference deltas, and aggregated summaries
@@ -176,6 +186,9 @@ helper and the replayed source fit used to generate sensitivity scenarios.}
 
 \item{summary(object)}{Returns a list containing the same reference,
 support, washout, and weight summaries in a compact summary object.}
+
+\item{workers, parallel}{Execution metadata indicating the worker count and
+whether the scan ran in parallel mode.}
 }
 \examples{
 \donttest{

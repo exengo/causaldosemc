@@ -20,6 +20,7 @@ cdmc_bootstrap(
   prediction_dose = NULL,
   prediction_history = NULL,
   prediction_type = c("response", "slope"),
+  workers = 1L,
   seed = NULL,
   verbose = FALSE
 )
@@ -105,6 +106,11 @@ cdmc_bootstrap(
   the fitted nonlinear response and \code{"slope"} returns the finite-difference
   derivative with respect to \code{dose_lag0}.}
 
+  \item{workers}{Number of workers used for bootstrap refits. Set
+  \code{workers = 1} for sequential execution (default). Values greater than 1
+  enable parallel bootstrap refits via multicore execution on supported
+  platforms.}
+
   \item{seed}{Optional random seed used before bootstrapping.}
 
   \item{verbose}{Logical flag indicating whether replicate progress messages
@@ -152,6 +158,11 @@ intervals for user-supplied dynamic responses, contrasts, or slopes. When
 multi-statistic dynamic estimand, the bootstrap also reports max-t simultaneous
 bands across the full requested summary vector.
 
+When \code{workers > 1}, bootstrap refits are distributed across workers and
+then reassembled in the original replicate order. If \code{seed} is supplied,
+the bootstrap uses deterministic per-replicate seeds so repeated calls with the
+same inputs return the same draws under a fixed worker configuration.
+
 The current implementation returns percentile intervals for a small set of
 summary statistics. It is intended as a first inference layer for the research
 workflow and now supports simultaneous dynamic uncertainty control over finite
@@ -174,7 +185,7 @@ includes \code{simultaneous_conf_low} and \code{simultaneous_conf_high}.}
 requested, or a list describing the max-t band calculation, including the
 critical value and the number of jointly successful bootstrap draws.}
 
-\item{n_boot, conf_level, rerun_tuning, lambda_method, n_failures}{Bootstrap
+\item{n_boot, conf_level, workers, parallel, rerun_tuning, lambda_method, n_failures}{Bootstrap
 metadata describing the resampling run.}
 }
 \examples{

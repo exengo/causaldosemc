@@ -1455,6 +1455,7 @@ cdmc_dr_fit <- function(
   lambda_min_ratio = 0.05,
   cv_rounds = 5L,
   cv_block_size = 2L,
+  cv_workers = 1L,
   washout = 0L,
   lag_order = 0L,
   outer_maxit = 20L,
@@ -1535,6 +1536,10 @@ cdmc_dr_fit <- function(
   if (!is.logical(kernel_balance_standardize) || length(kernel_balance_standardize) != 1L || is.na(kernel_balance_standardize)) {
     stop("kernel_balance_standardize must be TRUE or FALSE.", call. = FALSE)
   }
+  if (!is.numeric(cv_workers) || length(cv_workers) != 1L || !is.finite(cv_workers) || cv_workers < 1 || cv_workers != floor(cv_workers)) {
+    stop("cv_workers must be a positive integer.", call. = FALSE)
+  }
+  cv_workers <- as.integer(cv_workers)
 
   if (!is.null(seed)) {
     set.seed(seed)
@@ -1843,6 +1848,7 @@ cdmc_dr_fit <- function(
       lambda_min_ratio = lambda_min_ratio,
       cv_rounds = cv_rounds,
       cv_block_size = cv_block_size,
+      cv_workers = cv_workers,
       washout = washout,
       lag_order = lag_order,
       effect_model = "linear",
@@ -2157,6 +2163,7 @@ cdmc_dr_fit <- function(
       lambda_min_ratio = lambda_min_ratio,
       cv_rounds = cv_rounds,
       cv_block_size = cv_block_size,
+      cv_workers = cv_workers,
       washout = as.integer(washout),
       lag_order = as.integer(lag_order),
       outer_maxit = outer_maxit,

@@ -128,6 +128,7 @@ cdmc_tune_lambda <- function(
   lambda_min_ratio = 0.05,
   cv_rounds = 5L,
   cv_block_size = 2L,
+  cv_workers = 1L,
   outer_maxit = 20L,
   fe_maxit = 200L,
   soft_maxit = 100L,
@@ -155,12 +156,27 @@ cdmc_tune_lambda <- function(
   if (cv_block_size < 1L) {
     stop("cv_block_size must be a positive integer.", call. = FALSE)
   }
+  if (!is.numeric(cv_workers) || length(cv_workers) != 1L || !is.finite(cv_workers) || cv_workers < 1 || cv_workers != floor(cv_workers)) {
+    stop("cv_workers must be a positive integer.", call. = FALSE)
+  }
+  cv_workers <- as.integer(cv_workers)
   if (sum(mask) <= (nrow(mask) + ncol(mask) + 1L)) {
     stop(
       "Too few eligible zero-dose observations for blocked cross-validation.",
       call. = FALSE
     )
   }
+
+  use_parallel <- cv_workers > 1L
+  if (use_parallel && identical(.Platform$OS.type, "windows")) {
+    warning(
+      "Parallel CV tuning currently uses multicore execution and is not available on Windows. Falling back to sequential execution.",
+      call. = FALSE
+    )
+    use_parallel <- FALSE
+    cv_workers <- 1L
+  }
+  worker_count <- if (use_parallel) min(cv_workers, length(lambda_grid)) else 1L
 
   scores <- matrix(
     NA_real_,
@@ -195,8 +211,8 @@ cdmc_tune_lambda <- function(
       ))
     }
 
-    for (lambda_index in seq_along(lambda_grid)) {
-      if (verbose) {
+    evaluate_lambda <- function(lambda_index) {
+      if (verbose && !use_parallel) {
         message(sprintf(
           "  evaluating lambda %d/%d = %.6g",
           lambda_index,
@@ -221,12 +237,28 @@ cdmc_tune_lambda <- function(
       )
 
       holdout_errors <- (y_matrix[holdout_mask] - baseline_fit$baseline_hat[holdout_mask]) ^ 2
-      scores[lambda_index, round_index] <- if (is.null(weight_matrix)) {
+      if (is.null(weight_matrix)) {
         mean(holdout_errors)
       } else {
         stats::weighted.mean(holdout_errors, w = weight_matrix[holdout_mask])
       }
     }
+
+    lambda_scores <- if (use_parallel) {
+      unlist(
+        parallel::mclapply(
+          seq_along(lambda_grid),
+          evaluate_lambda,
+          mc.cores = worker_count,
+          mc.set.seed = TRUE
+        ),
+        use.names = FALSE
+      )
+    } else {
+      vapply(seq_along(lambda_grid), evaluate_lambda, numeric(1))
+    }
+
+    scores[, round_index] <- lambda_scores
   }
 
   mean_scores <- rowMeans(scores)
@@ -241,6 +273,8 @@ cdmc_tune_lambda <- function(
     selected_index = best_index,
     cv_rounds = cv_rounds,
     cv_block_size_requested = cv_block_size,
+    cv_workers = worker_count,
+    cv_parallel = use_parallel,
     cv_block_sizes_used = block_sizes_used,
     holdout_counts = holdout_counts
   )

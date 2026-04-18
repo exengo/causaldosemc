@@ -27,6 +27,7 @@ cdmc_fit(
   lambda_min_ratio = 0.05,
   cv_rounds = 5L,
   cv_block_size = 2L,
+  cv_workers = 1L,
   washout = 0L,
   lag_order = 0L,
   effect_model = c("linear", "spline", "none"),
@@ -116,6 +117,12 @@ cdmc_fit(
   \item{cv_block_size}{Requested within-unit contiguous holdout block size used
   when \code{lambda_selection = "cv"}. The implementation may fall back to smaller
   blocks if the requested size cannot produce a valid holdout set.}
+
+  \item{cv_workers}{Number of workers used when evaluating candidate lambda
+  values inside each blocked cross-validation round. Set
+  \code{cv_workers = 1} for sequential evaluation (default). Values greater
+  than 1 enable parallel lambda scoring via multicore execution on supported
+  platforms.}
 
   \item{washout}{Nonnegative integer giving the number of post-treatment periods
   to remove from the eligible zero-dose control set after each nonzero dose.

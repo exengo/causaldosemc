@@ -253,6 +253,7 @@ cdmc_select_fit_lambda <- function(
   lambda_min_ratio = 0.05,
   cv_rounds = 5L,
   cv_block_size = 2L,
+  cv_workers = 1L,
   rank_max,
   outer_maxit = 20L,
   fe_maxit = 200L,
@@ -276,6 +277,7 @@ cdmc_select_fit_lambda <- function(
         lambda_min_ratio = lambda_min_ratio,
         cv_rounds = cv_rounds,
         cv_block_size = cv_block_size,
+        cv_workers = cv_workers,
         outer_maxit = outer_maxit,
         fe_maxit = fe_maxit,
         soft_maxit = soft_maxit,
@@ -336,6 +338,7 @@ cdmc_fit <- function(
   lambda_min_ratio = 0.05,
   cv_rounds = 5L,
   cv_block_size = 2L,
+  cv_workers = 1L,
   washout = 0L,
   lag_order = 0L,
   effect_model = c("linear", "spline", "none"),
@@ -371,6 +374,10 @@ cdmc_fit <- function(
   nlambda <- as.integer(nlambda)
   cv_rounds <- as.integer(cv_rounds)
   cv_block_size <- as.integer(cv_block_size)
+  if (!is.numeric(cv_workers) || length(cv_workers) != 1L || !is.finite(cv_workers) || cv_workers < 1 || cv_workers != floor(cv_workers)) {
+    stop("cv_workers must be a positive integer.", call. = FALSE)
+  }
+  cv_workers <- as.integer(cv_workers)
 
   if (!is.numeric(effect_df) || length(effect_df) != 1L || !is.finite(effect_df) || effect_df < 1) {
     stop("effect_df must be a positive integer.", call. = FALSE)
@@ -452,6 +459,7 @@ cdmc_fit <- function(
     lambda_min_ratio = lambda_min_ratio,
     cv_rounds = cv_rounds,
     cv_block_size = cv_block_size,
+    cv_workers = cv_workers,
     rank_max = rank_max,
     outer_maxit = outer_maxit,
     fe_maxit = fe_maxit,
@@ -527,6 +535,7 @@ cdmc_fit <- function(
       lambda_min_ratio = lambda_min_ratio,
       cv_rounds = cv_rounds,
       cv_block_size = cv_block_size,
+      cv_workers = cv_workers,
       washout = washout,
       lag_order = lag_order,
       effect_model = effect_model,

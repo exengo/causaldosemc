@@ -669,6 +669,7 @@ cdmc_build_bootstrap_fit_spec <- function(object, rerun_tuning = NULL) {
         lambda_min_ratio = 0.05,
         cv_rounds = object$lambda_tuning$cv_rounds %||% 5L,
         cv_block_size = object$lambda_tuning$cv_block_size_requested %||% 2L,
+        cv_workers = object$fit_control$cv_workers %||% 1L,
         washout = object$washout,
         lag_order = object$lag_order,
         effect_model = object$effect_model,
@@ -744,6 +745,7 @@ cdmc_build_bootstrap_fit_spec <- function(object, rerun_tuning = NULL) {
       lambda_min_ratio = 0.05,
       cv_rounds = 5L,
       cv_block_size = 2L,
+      cv_workers = object$fit_control$cv_workers %||% 1L,
       washout = object$washout,
       lag_order = object$lag_order,
       outer_maxit = 20L,
@@ -888,6 +890,7 @@ cdmc_bootstrap <- function(
   prediction_dose = NULL,
   prediction_history = NULL,
   prediction_type = c("response", "slope"),
+  workers = 1L,
   seed = NULL,
   verbose = FALSE
 ) {
@@ -913,6 +916,11 @@ cdmc_bootstrap <- function(
   if (!is.numeric(conf_level) || length(conf_level) != 1L || conf_level <= 0 || conf_level >= 1) {
     stop("conf_level must be a scalar in (0, 1).", call. = FALSE)
   }
+
+  if (!is.numeric(workers) || length(workers) != 1L || !is.finite(workers) || workers < 1 || workers != floor(workers)) {
+    stop("workers must be a positive integer.", call. = FALSE)
+  }
+  workers <- as.integer(workers)
 
   statistics <- if (missing_statistics) {
     cdmc_default_bootstrap_statistics(object)
@@ -940,6 +948,18 @@ cdmc_bootstrap <- function(
   if (!is.null(seed)) {
     set.seed(seed)
   }
+
+  use_parallel <- workers > 1L
+  if (use_parallel && identical(.Platform$OS.type, "windows")) {
+    warning(
+      "Parallel bootstrap currently uses multicore execution and is not available on Windows. Falling back to sequential execution.",
+      call. = FALSE
+    )
+    use_parallel <- FALSE
+    workers <- 1L
+  }
+  worker_count <- if (use_parallel) min(workers, n_boot) else 1L
+  replicate_seeds <- if (use_parallel) sample.int(.Machine$integer.max, n_boot, replace = TRUE) else integer(0)
 
   source_object <- cdmc_bootstrap_source_object(object)
   original_columns <- cdmc_bootstrap_original_columns(object)
@@ -976,8 +996,12 @@ cdmc_bootstrap <- function(
   )
   errors <- character(0)
 
-  for (bootstrap_index in seq_len(n_boot)) {
-    if (verbose) {
+  run_bootstrap_replicate <- function(bootstrap_index, replicate_seed = NULL) {
+    if (!is.null(replicate_seed)) {
+      set.seed(replicate_seed)
+    }
+
+    if (verbose && !use_parallel) {
       message(sprintf("bootstrap replicate %d/%d", bootstrap_index, n_boot))
     }
 
@@ -1006,8 +1030,7 @@ cdmc_bootstrap <- function(
     )
 
     if (inherits(bootstrap_fit, "error")) {
-      errors <- c(errors, conditionMessage(bootstrap_fit))
-      next
+      return(list(index = bootstrap_index, statistics = NULL, error = conditionMessage(bootstrap_fit)))
     }
 
     bootstrap_target <- tryCatch(
@@ -1016,8 +1039,7 @@ cdmc_bootstrap <- function(
     )
 
     if (inherits(bootstrap_target, "error")) {
-      errors <- c(errors, conditionMessage(bootstrap_target))
-      next
+      return(list(index = bootstrap_index, statistics = NULL, error = conditionMessage(bootstrap_target)))
     }
 
     bootstrap_statistics <- cdmc_collect_bootstrap_statistics(
@@ -1029,7 +1051,39 @@ cdmc_bootstrap <- function(
       prediction_history = prediction_history,
       prediction_type = prediction_type
     )
-    bootstrap_draws[bootstrap_index, names(bootstrap_statistics)] <- bootstrap_statistics
+
+    list(index = bootstrap_index, statistics = bootstrap_statistics, error = NULL)
+  }
+
+  if (use_parallel && verbose) {
+    message(sprintf("running bootstrap in parallel with %d workers", worker_count))
+  }
+
+  replicate_results <- if (use_parallel) {
+    parallel::mclapply(
+      seq_len(n_boot),
+      function(bootstrap_index) {
+        run_bootstrap_replicate(
+          bootstrap_index = bootstrap_index,
+          replicate_seed = replicate_seeds[[bootstrap_index]]
+        )
+      },
+      mc.cores = worker_count,
+      mc.set.seed = FALSE
+    )
+  } else {
+    lapply(seq_len(n_boot), function(bootstrap_index) {
+      run_bootstrap_replicate(bootstrap_index = bootstrap_index)
+    })
+  }
+
+  for (replicate_result in replicate_results) {
+    if (!is.null(replicate_result$error)) {
+      errors <- c(errors, replicate_result$error)
+      next
+    }
+
+    bootstrap_draws[replicate_result$index, names(replicate_result$statistics)] <- replicate_result$statistics
   }
 
   simultaneous_result <- if (isTRUE(simultaneous)) {
@@ -1058,6 +1112,8 @@ cdmc_bootstrap <- function(
     n_boot = n_boot,
     conf_level = conf_level,
     simultaneous = simultaneous_result,
+    workers = worker_count,
+    parallel = use_parallel,
     rerun_tuning = bootstrap_spec$rerun_tuning,
     lambda_method = cdmc_bootstrap_lambda_method(object),
     n_failures = length(errors),
@@ -1073,6 +1129,7 @@ print.cdmc_bootstrap <- function(x, ...) {
   cat(sprintf("  bootstrap replications: %d\n", x$n_boot))
   cat(sprintf("  successful replications: %d\n", x$n_boot - x$n_failures))
   cat(sprintf("  confidence level: %.3f\n", x$conf_level))
+  cat(sprintf("  execution mode: %s (%d worker%s)\n", if (isTRUE(x$parallel)) "parallel" else "sequential", x$workers %||% 1L, if ((x$workers %||% 1L) == 1L) "" else "s"))
   if (!is.null(x$simultaneous) && isTRUE(x$simultaneous$enabled)) {
     cat(sprintf("  simultaneous bands: %s\n", x$simultaneous$method))
     cat(sprintf("  joint successful replications: %d\n", x$simultaneous$n_success))
