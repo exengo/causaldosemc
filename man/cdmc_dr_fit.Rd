@@ -50,6 +50,7 @@ cdmc_dr_fit(
   stabilize_weights = TRUE,
   max_weight = "adaptive",
   n_folds = 2L,
+  dr_workers = 1L,
   fold_assignments = NULL,
   lambda = NULL,
   rank_max = NULL,
@@ -61,6 +62,10 @@ cdmc_dr_fit(
   cv_rounds = 5L,
   cv_block_size = 2L,
   cv_workers = 1L,
+  cv_top_k = NULL,
+  cv_coarse_to_fine = FALSE,
+  cv_coarse_nlambda = NULL,
+  cv_warm_starts = FALSE,
   washout = 0L,
   lag_order = 0L,
   outer_maxit = 20L,
@@ -276,6 +281,11 @@ cdmc_dr_fit(
 
   \item{n_folds}{Number of unit folds used for cross-fitting.}
 
+  \item{dr_workers}{Number of workers used to evaluate DR folds. Set
+  \code{dr_workers = 1} for sequential fold execution (default). Values
+  greater than 1 enable parallel fold execution via multicore on supported
+  platforms.}
+
   \item{fold_assignments}{Optional data frame with columns \code{unit} and
   \code{fold} that fixes the unit-level cross-fitting split. When supplied,
   the rows must match the current unit set exactly and use consecutive fold
@@ -283,7 +293,8 @@ cdmc_dr_fit(
   are needed for replay or formal sensitivity routines.}
 
   \item{lambda, rank_max, lambda_fraction, lambda_selection, lambda_grid,
-  nlambda, lambda_min_ratio, cv_rounds, cv_block_size, cv_workers, washout, lag_order,
+  nlambda, lambda_min_ratio, cv_rounds, cv_block_size, cv_workers, cv_top_k,
+  cv_coarse_to_fine, cv_coarse_nlambda, cv_warm_starts, washout, lag_order,
   outer_maxit, fe_maxit, soft_maxit, tol, fe_tol, zero_tolerance, seed,
   verbose}{Passed through to the fold-specific \code{cdmc_fit()} calls. The
   built-in second stage is always linear in the contemporaneous and lagged
@@ -292,7 +303,15 @@ cdmc_dr_fit(
   \code{lambda_selection = "cv"} so each fold reuses the blocked
   cross-validation tuning rule rather than the heuristic fallback. Use
   \code{cv_workers > 1} to parallelize lambda-candidate scoring within each
-  fold's blocked cross-validation routine on supported platforms.}
+  fold's blocked cross-validation routine on supported platforms. Set
+  \code{cv_top_k} to a positive integer to enable approximate candidate
+  screening after each round (all candidates are still evaluated in the first
+  round), set \code{cv_coarse_to_fine = TRUE} to run an additional two-stage
+  coarse-to-fine search over lambda candidates, use
+  \code{cv_coarse_nlambda} to control coarse-stage grid size, and set
+  \code{cv_warm_starts = TRUE} to allow sequential
+  \code{cv_workers = 1} tuning to reuse baseline fit state across lambda
+  candidates within each fold.}
 
   \item{x}{A \code{cdmc_dr_fit} object.}
 

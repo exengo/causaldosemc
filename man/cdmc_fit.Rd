@@ -28,6 +28,10 @@ cdmc_fit(
   cv_rounds = 5L,
   cv_block_size = 2L,
   cv_workers = 1L,
+  cv_top_k = NULL,
+  cv_coarse_to_fine = FALSE,
+  cv_coarse_nlambda = NULL,
+  cv_warm_starts = FALSE,
   washout = 0L,
   lag_order = 0L,
   effect_model = c("linear", "spline", "none"),
@@ -123,6 +127,32 @@ cdmc_fit(
   \code{cv_workers = 1} for sequential evaluation (default). Values greater
   than 1 enable parallel lambda scoring via multicore execution on supported
   platforms.}
+
+  \item{cv_top_k}{Optional positive integer controlling approximate blocked
+  CV screening. When supplied with \code{lambda_selection = "cv"}, all
+  candidates are evaluated in the first round, then only the best
+  \code{cv_top_k} candidates by current mean holdout loss are retained for
+  remaining rounds. Use \code{NULL} (default) to disable screening and score
+  all candidates in every round.}
+
+  \item{cv_coarse_to_fine}{Logical flag enabling an approximate two-stage
+  lambda search when \code{lambda_selection = "cv"} and at least five
+  candidates are available. The tuner first evaluates a coarse subset of the
+  candidate grid, then re-runs blocked CV on a local three-point fine window
+  around the coarse winner. Defaults to \code{FALSE}.}
+
+  \item{cv_coarse_nlambda}{Optional integer \eqn{\ge 3} controlling the
+  number of coarse-stage candidates when \code{cv_coarse_to_fine = TRUE}.
+  Use \code{NULL} to choose a default coarse size based on
+  \eqn{\lceil\sqrt{K}\rceil}, where \eqn{K} is the total number of lambda
+  candidates.}
+
+  \item{cv_warm_starts}{Logical flag controlling whether sequential blocked
+  cross-validation (\code{cv_workers = 1}) should warm-start each smaller
+  lambda candidate from the previous candidate's baseline fit state. This can
+  reduce runtime for large grids but may change the tuned lambda because the
+  baseline objective is solved by alternating updates. Defaults to
+  \code{FALSE}.}
 
   \item{washout}{Nonnegative integer giving the number of post-treatment periods
   to remove from the eligible zero-dose control set after each nonzero dose.

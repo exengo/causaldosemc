@@ -72,6 +72,115 @@ test_that("cross-fitted DR estimator validates cv_workers", {
   )
 })
 
+test_that("cross-fitted DR estimator validates dr_workers", {
+  panel <- simulate_cdmc_data(
+    n_units = 8,
+    n_times = 8,
+    rank = 2,
+    beta = 0.8,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1123
+  )
+
+  expect_error(
+    cdmc_dr_fit(
+      data = panel,
+      outcome = "y",
+      dose = "dose",
+      unit = "unit",
+      time = "time",
+      covariates = "x1",
+      weight_method = "gaussian_gps",
+      n_folds = 2,
+      dr_workers = 0,
+      lambda = 0.2,
+      rank_max = 2,
+      washout = 0,
+      lag_order = 1,
+      seed = 1123
+    ),
+    "dr_workers must be a positive integer"
+  )
+})
+
+test_that("cross-fitted DR estimator parallel folds match sequential folds", {
+  skip_on_os("windows")
+
+  panel <- simulate_cdmc_data(
+    n_units = 12,
+    n_times = 8,
+    rank = 2,
+    beta = 0.9,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.04,
+    switch_on_prob = 0.18,
+    switch_off_prob = 0.42,
+    seed = 1125
+  )
+
+  fit_seeded <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "gaussian_gps",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 2,
+    washout = 0,
+    lag_order = 1,
+    seed = 1125
+  )
+
+  fit_seq <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "gaussian_gps",
+    fold_assignments = fit_seeded$fold_assignments,
+    dr_workers = 1,
+    lambda = 0.2,
+    rank_max = 2,
+    washout = 0,
+    lag_order = 1,
+    seed = 999
+  )
+
+  fit_par <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    weight_method = "gaussian_gps",
+    fold_assignments = fit_seeded$fold_assignments,
+    dr_workers = 2,
+    lambda = 0.2,
+    rank_max = 2,
+    washout = 0,
+    lag_order = 1,
+    seed = 999
+  )
+
+  expect_false(isTRUE(fit_seq$dr_parallel))
+  expect_true(isTRUE(fit_par$dr_parallel))
+  expect_equal(fit_seq$dr_workers, 1L)
+  expect_equal(fit_par$dr_workers, 2L)
+  expect_equal(fit_seq$effect$coefficients, fit_par$effect$coefficients, tolerance = 1e-10)
+  expect_equal(fit_seq$effect$tau_dr, fit_par$effect$tau_dr, tolerance = 1e-10)
+})
+
 test_that("cross-fitted DR estimator reuses supplied fold assignments deterministically", {
   panel <- simulate_cdmc_data(
     n_units = 12,

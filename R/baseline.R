@@ -135,6 +135,7 @@ cdmc_fit_baseline <- function(
   weight_matrix = NULL,
   lambda,
   rank_max,
+  fit_start = NULL,
   outer_maxit = 20L,
   fe_maxit = 200L,
   soft_maxit = 100L,
@@ -148,9 +149,10 @@ cdmc_fit_baseline <- function(
   n_times <- ncol(y_matrix)
   optimization_weights <- if (is.null(weight_matrix)) NULL else weight_matrix * mask
 
-  l_matrix <- matrix(0, nrow = n_units, ncol = n_times)
-  nuisance_start <- NULL
-  warm_start <- NULL
+  fit_start <- if (is.list(fit_start)) fit_start else NULL
+  l_matrix <- fit_start$l_matrix %||% matrix(0, nrow = n_units, ncol = n_times)
+  nuisance_start <- fit_start$nuisance %||% NULL
+  warm_start <- fit_start$warm %||% NULL
   converged <- FALSE
   relative_change <- Inf
   soft_fit <- NULL
@@ -243,6 +245,11 @@ cdmc_fit_baseline <- function(
     converged = converged,
     relative_change = relative_change,
     soft_fit = soft_fit,
+    fit_start = list(
+      l_matrix = l_matrix,
+      nuisance = final_nuisance,
+      warm = soft_fit
+    ),
     solver = if (is.null(optimization_weights)) "softImpute" else "weighted_svt",
     effective_rank = if (is.null(soft_fit)) 0L else sum(soft_fit$d > sqrt(.Machine$double.eps))
   )

@@ -1445,6 +1445,7 @@ cdmc_dr_fit <- function(
   stabilize_weights = TRUE,
   max_weight = "adaptive",
   n_folds = 2L,
+  dr_workers = 1L,
   fold_assignments = NULL,
   lambda = NULL,
   rank_max = NULL,
@@ -1456,6 +1457,10 @@ cdmc_dr_fit <- function(
   cv_rounds = 5L,
   cv_block_size = 2L,
   cv_workers = 1L,
+  cv_top_k = NULL,
+  cv_coarse_to_fine = FALSE,
+  cv_coarse_nlambda = NULL,
+  cv_warm_starts = FALSE,
   washout = 0L,
   lag_order = 0L,
   outer_maxit = 20L,
@@ -1536,10 +1541,34 @@ cdmc_dr_fit <- function(
   if (!is.logical(kernel_balance_standardize) || length(kernel_balance_standardize) != 1L || is.na(kernel_balance_standardize)) {
     stop("kernel_balance_standardize must be TRUE or FALSE.", call. = FALSE)
   }
+  if (!is.numeric(dr_workers) || length(dr_workers) != 1L || !is.finite(dr_workers) || dr_workers < 1 || dr_workers != floor(dr_workers)) {
+    stop("dr_workers must be a positive integer.", call. = FALSE)
+  }
+  dr_workers <- as.integer(dr_workers)
   if (!is.numeric(cv_workers) || length(cv_workers) != 1L || !is.finite(cv_workers) || cv_workers < 1 || cv_workers != floor(cv_workers)) {
     stop("cv_workers must be a positive integer.", call. = FALSE)
   }
   cv_workers <- as.integer(cv_workers)
+  if (!is.null(cv_top_k)) {
+    if (!is.numeric(cv_top_k) || length(cv_top_k) != 1L || !is.finite(cv_top_k) || cv_top_k < 1 || cv_top_k != floor(cv_top_k)) {
+      stop("cv_top_k must be NULL or a positive integer.", call. = FALSE)
+    }
+    cv_top_k <- as.integer(cv_top_k)
+  }
+  if (!is.logical(cv_coarse_to_fine) || length(cv_coarse_to_fine) != 1L || is.na(cv_coarse_to_fine)) {
+    stop("cv_coarse_to_fine must be TRUE or FALSE.", call. = FALSE)
+  }
+  cv_coarse_to_fine <- isTRUE(cv_coarse_to_fine)
+  if (!is.null(cv_coarse_nlambda)) {
+    if (!is.numeric(cv_coarse_nlambda) || length(cv_coarse_nlambda) != 1L || !is.finite(cv_coarse_nlambda) || cv_coarse_nlambda < 3 || cv_coarse_nlambda != floor(cv_coarse_nlambda)) {
+      stop("cv_coarse_nlambda must be NULL or an integer >= 3.", call. = FALSE)
+    }
+    cv_coarse_nlambda <- as.integer(cv_coarse_nlambda)
+  }
+  if (!is.logical(cv_warm_starts) || length(cv_warm_starts) != 1L || is.na(cv_warm_starts)) {
+    stop("cv_warm_starts must be TRUE or FALSE.", call. = FALSE)
+  }
+  cv_warm_starts <- isTRUE(cv_warm_starts)
 
   if (!is.null(seed)) {
     set.seed(seed)
@@ -1622,7 +1651,31 @@ cdmc_dr_fit <- function(
   weight_diagnostic_rows <- vector("list", n_folds)
   sample_counter <- 0L
 
-  for (fold_index in seq_len(n_folds)) {
+  use_fold_parallel <- dr_workers > 1L
+  if (use_fold_parallel && identical(.Platform$OS.type, "windows")) {
+    warning(
+      "Parallel DR fold execution currently uses multicore execution and is not available on Windows. Falling back to sequential execution.",
+      call. = FALSE
+    )
+    use_fold_parallel <- FALSE
+    dr_workers <- 1L
+  }
+  fold_worker_count <- if (use_fold_parallel) min(dr_workers, n_folds) else 1L
+  fold_cv_workers <- if (use_fold_parallel && cv_workers > 1L) {
+    if (verbose) {
+      message("dr_workers > 1 detected; using cv_workers = 1 inside each fold to avoid nested oversubscription")
+    }
+    1L
+  } else {
+    cv_workers
+  }
+  fold_seeds <- if (use_fold_parallel) sample.int(.Machine$integer.max, n_folds, replace = TRUE) else integer(0)
+
+  run_dr_fold <- function(fold_index) {
+    if (use_fold_parallel) {
+      set.seed(fold_seeds[[fold_index]])
+    }
+
     holdout_units <- fold_assignments$unit[fold_assignments$fold == fold_index]
     train_data <- full_data[!full_data[[unit]] %in% holdout_units, , drop = FALSE]
     holdout_data <- full_data[full_data[[unit]] %in% holdout_units, , drop = FALSE]
@@ -1848,7 +1901,11 @@ cdmc_dr_fit <- function(
       lambda_min_ratio = lambda_min_ratio,
       cv_rounds = cv_rounds,
       cv_block_size = cv_block_size,
-      cv_workers = cv_workers,
+      cv_workers = fold_cv_workers,
+      cv_top_k = cv_top_k,
+      cv_coarse_to_fine = cv_coarse_to_fine,
+      cv_coarse_nlambda = cv_coarse_nlambda,
+      cv_warm_starts = cv_warm_starts,
       washout = washout,
       lag_order = lag_order,
       effect_model = "linear",
@@ -1928,24 +1985,26 @@ cdmc_dr_fit <- function(
       holdout_prepared$data$.cdmc_global_unit_index,
       holdout_prepared$data$.cdmc_global_time_index
     )
-    baseline_oof[global_indices] <- cdmc_flatten_matrix(holdout_baseline$baseline_hat)
-    tau_oof[global_indices] <- cdmc_flatten_matrix(holdout_prepared$y_matrix - holdout_baseline$baseline_hat)
-    weight_oof[global_indices] <- holdout_prepared$data$.cdmc_weight
+    baseline_flat <- cdmc_flatten_matrix(holdout_baseline$baseline_hat)
+    tau_flat <- cdmc_flatten_matrix(holdout_prepared$y_matrix - holdout_baseline$baseline_hat)
+    weight_flat <- holdout_prepared$data$.cdmc_weight
+
+    sample_global_indices <- matrix(integer(0), ncol = 2)
+    sample_tau_model <- numeric(0)
+    sample_pseudo_tau <- numeric(0)
+    design_part <- NULL
+    sample_table <- NULL
 
     if (nrow(fold_sample$design) > 0L) {
-      sample_counter <- sample_counter + 1L
-      design_parts[[sample_counter]] <- fold_sample$design
-      pseudo_parts[[sample_counter]] <- fold_sample$pseudo_tau
-      fold_samples[[sample_counter]] <- fold_sample$sample_table
-
       sample_linear_indices <- (fold_sample$sample_indices[, 1L] - 1L) * holdout_prepared$n_times + fold_sample$sample_indices[, 2L]
       sample_global_indices <- cbind(
         holdout_prepared$data$.cdmc_global_unit_index[sample_linear_indices],
         holdout_prepared$data$.cdmc_global_time_index[sample_linear_indices]
       )
-      sample_mask_oof[sample_global_indices] <- TRUE
-      tau_model_oof[sample_global_indices] <- fold_sample$tau_model
-      tau_dr_oof[sample_global_indices] <- fold_sample$pseudo_tau
+      sample_tau_model <- fold_sample$tau_model
+      sample_pseudo_tau <- fold_sample$pseudo_tau
+      design_part <- fold_sample$design
+      sample_table <- fold_sample$sample_table
     }
 
     sample_linear_indices <- if (nrow(fold_sample$sample_indices) > 0L) {
@@ -1954,7 +2013,7 @@ cdmc_dr_fit <- function(
       integer(0)
     }
     observed_rows <- !is.na(holdout_prepared$data$.cdmc_observed) & holdout_prepared$data$.cdmc_observed
-    weight_diagnostic_rows[[fold_index]] <- cdmc_fold_weight_diagnostic_row(
+    weight_diag_row <- cdmc_fold_weight_diagnostic_row(
       fold = fold_index,
       weight_method = weight_method,
       requested_max_weight = if (is.null(gps_fit)) NULL else gps_fit$requested_max_weight %||% NULL,
@@ -1969,7 +2028,7 @@ cdmc_dr_fit <- function(
       }
     )
 
-    fold_summaries[[fold_index]] <- list(
+    fold_summary <- list(
       fold = fold_index,
       holdout_units = holdout_units,
       weight_method = weight_method,
@@ -2016,6 +2075,52 @@ cdmc_dr_fit <- function(
       adaptive_balance_max_abs_standardized_balance = if (is.null(gps_fit) || !identical(weight_method, "adaptive_balance")) NULL else gps_fit$max_abs_standardized_balance,
       sample_size = nrow(fold_sample$design)
     )
+
+    list(
+      fold_index = fold_index,
+      global_indices = global_indices,
+      baseline_flat = baseline_flat,
+      tau_flat = tau_flat,
+      weight_flat = weight_flat,
+      sample_global_indices = sample_global_indices,
+      sample_tau_model = sample_tau_model,
+      sample_pseudo_tau = sample_pseudo_tau,
+      design_part = design_part,
+      sample_table = sample_table,
+      weight_diagnostic_row = weight_diag_row,
+      fold_summary = fold_summary
+    )
+  }
+
+  fold_results <- if (use_fold_parallel) {
+    parallel::mclapply(
+      seq_len(n_folds),
+      run_dr_fold,
+      mc.cores = fold_worker_count,
+      mc.set.seed = FALSE
+    )
+  } else {
+    lapply(seq_len(n_folds), run_dr_fold)
+  }
+
+  for (fold_result in fold_results) {
+    baseline_oof[fold_result$global_indices] <- fold_result$baseline_flat
+    tau_oof[fold_result$global_indices] <- fold_result$tau_flat
+    weight_oof[fold_result$global_indices] <- fold_result$weight_flat
+
+    if (nrow(fold_result$sample_global_indices) > 0L) {
+      sample_mask_oof[fold_result$sample_global_indices] <- TRUE
+      tau_model_oof[fold_result$sample_global_indices] <- fold_result$sample_tau_model
+      tau_dr_oof[fold_result$sample_global_indices] <- fold_result$sample_pseudo_tau
+
+      sample_counter <- sample_counter + 1L
+      design_parts[[sample_counter]] <- fold_result$design_part
+      pseudo_parts[[sample_counter]] <- fold_result$sample_pseudo_tau
+      fold_samples[[sample_counter]] <- fold_result$sample_table
+    }
+
+    weight_diagnostic_rows[[fold_result$fold_index]] <- fold_result$weight_diagnostic_row
+    fold_summaries[[fold_result$fold_index]] <- fold_result$fold_summary
   }
 
   design_parts <- design_parts[seq_len(sample_counter)]
@@ -2081,6 +2186,8 @@ cdmc_dr_fit <- function(
     weight_matrix = weight_oof,
     fold_assignments = fold_assignments,
     n_folds = n_folds,
+    dr_workers = fold_worker_count,
+    dr_parallel = use_fold_parallel,
     weight_method = weight_method,
     weight_covariates = weight_covariates,
     gps_time_effects = gps_time_effects,
@@ -2154,6 +2261,7 @@ cdmc_dr_fit <- function(
       stabilize_weights = stabilize_weights,
       max_weight = max_weight,
       n_folds = n_folds,
+      dr_workers = fold_worker_count,
       lambda = lambda,
       rank_max = rank_max,
       lambda_fraction = lambda_fraction,
@@ -2164,6 +2272,10 @@ cdmc_dr_fit <- function(
       cv_rounds = cv_rounds,
       cv_block_size = cv_block_size,
       cv_workers = cv_workers,
+      cv_top_k = cv_top_k,
+      cv_coarse_to_fine = cv_coarse_to_fine,
+      cv_coarse_nlambda = cv_coarse_nlambda,
+      cv_warm_starts = cv_warm_starts,
       washout = as.integer(washout),
       lag_order = as.integer(lag_order),
       outer_maxit = outer_maxit,

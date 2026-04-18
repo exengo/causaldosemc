@@ -254,6 +254,10 @@ cdmc_select_fit_lambda <- function(
   cv_rounds = 5L,
   cv_block_size = 2L,
   cv_workers = 1L,
+  cv_top_k = NULL,
+  cv_coarse_to_fine = FALSE,
+  cv_coarse_nlambda = NULL,
+  cv_warm_starts = FALSE,
   rank_max,
   outer_maxit = 20L,
   fe_maxit = 200L,
@@ -278,6 +282,10 @@ cdmc_select_fit_lambda <- function(
         cv_rounds = cv_rounds,
         cv_block_size = cv_block_size,
         cv_workers = cv_workers,
+        cv_top_k = cv_top_k,
+        cv_coarse_to_fine = cv_coarse_to_fine,
+        cv_coarse_nlambda = cv_coarse_nlambda,
+        cv_warm_starts = cv_warm_starts,
         outer_maxit = outer_maxit,
         fe_maxit = fe_maxit,
         soft_maxit = soft_maxit,
@@ -339,6 +347,10 @@ cdmc_fit <- function(
   cv_rounds = 5L,
   cv_block_size = 2L,
   cv_workers = 1L,
+  cv_top_k = NULL,
+  cv_coarse_to_fine = FALSE,
+  cv_coarse_nlambda = NULL,
+  cv_warm_starts = FALSE,
   washout = 0L,
   lag_order = 0L,
   effect_model = c("linear", "spline", "none"),
@@ -378,6 +390,26 @@ cdmc_fit <- function(
     stop("cv_workers must be a positive integer.", call. = FALSE)
   }
   cv_workers <- as.integer(cv_workers)
+  if (!is.null(cv_top_k)) {
+    if (!is.numeric(cv_top_k) || length(cv_top_k) != 1L || !is.finite(cv_top_k) || cv_top_k < 1 || cv_top_k != floor(cv_top_k)) {
+      stop("cv_top_k must be NULL or a positive integer.", call. = FALSE)
+    }
+    cv_top_k <- as.integer(cv_top_k)
+  }
+  if (!is.logical(cv_coarse_to_fine) || length(cv_coarse_to_fine) != 1L || is.na(cv_coarse_to_fine)) {
+    stop("cv_coarse_to_fine must be TRUE or FALSE.", call. = FALSE)
+  }
+  cv_coarse_to_fine <- isTRUE(cv_coarse_to_fine)
+  if (!is.null(cv_coarse_nlambda)) {
+    if (!is.numeric(cv_coarse_nlambda) || length(cv_coarse_nlambda) != 1L || !is.finite(cv_coarse_nlambda) || cv_coarse_nlambda < 3 || cv_coarse_nlambda != floor(cv_coarse_nlambda)) {
+      stop("cv_coarse_nlambda must be NULL or an integer >= 3.", call. = FALSE)
+    }
+    cv_coarse_nlambda <- as.integer(cv_coarse_nlambda)
+  }
+  if (!is.logical(cv_warm_starts) || length(cv_warm_starts) != 1L || is.na(cv_warm_starts)) {
+    stop("cv_warm_starts must be TRUE or FALSE.", call. = FALSE)
+  }
+  cv_warm_starts <- isTRUE(cv_warm_starts)
 
   if (!is.numeric(effect_df) || length(effect_df) != 1L || !is.finite(effect_df) || effect_df < 1) {
     stop("effect_df must be a positive integer.", call. = FALSE)
@@ -460,6 +492,10 @@ cdmc_fit <- function(
     cv_rounds = cv_rounds,
     cv_block_size = cv_block_size,
     cv_workers = cv_workers,
+    cv_top_k = cv_top_k,
+    cv_coarse_to_fine = cv_coarse_to_fine,
+    cv_coarse_nlambda = cv_coarse_nlambda,
+    cv_warm_starts = cv_warm_starts,
     rank_max = rank_max,
     outer_maxit = outer_maxit,
     fe_maxit = fe_maxit,
@@ -536,6 +572,10 @@ cdmc_fit <- function(
       cv_rounds = cv_rounds,
       cv_block_size = cv_block_size,
       cv_workers = cv_workers,
+      cv_top_k = cv_top_k,
+      cv_coarse_to_fine = cv_coarse_to_fine,
+      cv_coarse_nlambda = cv_coarse_nlambda,
+      cv_warm_starts = cv_warm_starts,
       washout = washout,
       lag_order = lag_order,
       effect_model = effect_model,

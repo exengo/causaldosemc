@@ -129,6 +129,10 @@ cdmc_tune_lambda <- function(
   cv_rounds = 5L,
   cv_block_size = 2L,
   cv_workers = 1L,
+  cv_top_k = NULL,
+  cv_coarse_to_fine = FALSE,
+  cv_coarse_nlambda = NULL,
+  cv_warm_starts = FALSE,
   outer_maxit = 20L,
   fe_maxit = 200L,
   soft_maxit = 100L,
@@ -160,6 +164,93 @@ cdmc_tune_lambda <- function(
     stop("cv_workers must be a positive integer.", call. = FALSE)
   }
   cv_workers <- as.integer(cv_workers)
+  if (!is.null(cv_top_k)) {
+    if (!is.numeric(cv_top_k) || length(cv_top_k) != 1L || !is.finite(cv_top_k) || cv_top_k < 1 || cv_top_k != floor(cv_top_k)) {
+      stop("cv_top_k must be NULL or a positive integer.", call. = FALSE)
+    }
+    cv_top_k <- as.integer(cv_top_k)
+  }
+  if (!is.logical(cv_coarse_to_fine) || length(cv_coarse_to_fine) != 1L || is.na(cv_coarse_to_fine)) {
+    stop("cv_coarse_to_fine must be TRUE or FALSE.", call. = FALSE)
+  }
+  cv_coarse_to_fine <- isTRUE(cv_coarse_to_fine)
+  if (!is.null(cv_coarse_nlambda)) {
+    if (!is.numeric(cv_coarse_nlambda) || length(cv_coarse_nlambda) != 1L || !is.finite(cv_coarse_nlambda) || cv_coarse_nlambda < 3 || cv_coarse_nlambda != floor(cv_coarse_nlambda)) {
+      stop("cv_coarse_nlambda must be NULL or an integer >= 3.", call. = FALSE)
+    }
+    cv_coarse_nlambda <- as.integer(cv_coarse_nlambda)
+  }
+  if (!is.logical(cv_warm_starts) || length(cv_warm_starts) != 1L || is.na(cv_warm_starts)) {
+    stop("cv_warm_starts must be TRUE or FALSE.", call. = FALSE)
+  }
+  cv_warm_starts <- isTRUE(cv_warm_starts)
+
+  if (cv_coarse_to_fine && length(lambda_grid) >= 5L) {
+    coarse_n <- cv_coarse_nlambda %||% min(length(lambda_grid), max(3L, ceiling(sqrt(length(lambda_grid)))))
+    coarse_n <- min(coarse_n, length(lambda_grid))
+
+    coarse_indices <- sort(unique(round(seq(1, length(lambda_grid), length.out = coarse_n))))
+    coarse_grid <- lambda_grid[coarse_indices]
+
+    coarse_result <- cdmc_tune_lambda(
+      y_matrix = y_matrix,
+      x_matrices = x_matrices,
+      mask = mask,
+      weight_matrix = weight_matrix,
+      rank_max = rank_max,
+      lambda_grid = coarse_grid,
+      nlambda = nlambda,
+      lambda_min_ratio = lambda_min_ratio,
+      cv_rounds = cv_rounds,
+      cv_block_size = cv_block_size,
+      cv_workers = cv_workers,
+      cv_top_k = cv_top_k,
+      cv_coarse_to_fine = FALSE,
+      cv_coarse_nlambda = NULL,
+      cv_warm_starts = cv_warm_starts,
+      outer_maxit = outer_maxit,
+      fe_maxit = fe_maxit,
+      soft_maxit = soft_maxit,
+      tol = tol,
+      fe_tol = fe_tol,
+      verbose = verbose
+    )
+
+    coarse_selected_index <- which.min(abs(lambda_grid - coarse_result$selected_lambda))
+    fine_indices <- seq.int(max(1L, coarse_selected_index - 1L), min(length(lambda_grid), coarse_selected_index + 1L))
+    fine_grid <- lambda_grid[fine_indices]
+
+    fine_result <- cdmc_tune_lambda(
+      y_matrix = y_matrix,
+      x_matrices = x_matrices,
+      mask = mask,
+      weight_matrix = weight_matrix,
+      rank_max = rank_max,
+      lambda_grid = fine_grid,
+      nlambda = nlambda,
+      lambda_min_ratio = lambda_min_ratio,
+      cv_rounds = cv_rounds,
+      cv_block_size = cv_block_size,
+      cv_workers = cv_workers,
+      cv_top_k = NULL,
+      cv_coarse_to_fine = FALSE,
+      cv_coarse_nlambda = NULL,
+      cv_warm_starts = cv_warm_starts,
+      outer_maxit = outer_maxit,
+      fe_maxit = fe_maxit,
+      soft_maxit = soft_maxit,
+      tol = tol,
+      fe_tol = fe_tol,
+      verbose = verbose
+    )
+
+    fine_result$cv_coarse_to_fine <- TRUE
+    fine_result$cv_coarse_nlambda <- coarse_n
+    fine_result$cv_coarse_grid <- coarse_grid
+    fine_result$cv_coarse_selected_lambda <- coarse_result$selected_lambda
+    fine_result$cv_fine_grid <- fine_grid
+    return(fine_result)
+  }
   if (sum(mask) <= (nrow(mask) + ncol(mask) + 1L)) {
     stop(
       "Too few eligible zero-dose observations for blocked cross-validation.",
@@ -177,6 +268,9 @@ cdmc_tune_lambda <- function(
     cv_workers <- 1L
   }
   worker_count <- if (use_parallel) min(cv_workers, length(lambda_grid)) else 1L
+  use_warm_starts <- cv_warm_starts && !use_parallel
+  use_screening <- !is.null(cv_top_k) && cv_top_k < length(lambda_grid)
+  active_indices <- seq_along(lambda_grid)
 
   scores <- matrix(
     NA_real_,
@@ -244,10 +338,12 @@ cdmc_tune_lambda <- function(
       }
     }
 
+    lambda_indices <- if (use_screening) active_indices else seq_along(lambda_grid)
+
     lambda_scores <- if (use_parallel) {
       unlist(
         parallel::mclapply(
-          seq_along(lambda_grid),
+          lambda_indices,
           evaluate_lambda,
           mc.cores = worker_count,
           mc.set.seed = TRUE
@@ -255,13 +351,70 @@ cdmc_tune_lambda <- function(
         use.names = FALSE
       )
     } else {
-      vapply(seq_along(lambda_grid), evaluate_lambda, numeric(1))
+      lambda_scores_seq <- numeric(length(lambda_indices))
+      lambda_fit_start <- NULL
+      for (position in seq_along(lambda_indices)) {
+        lambda_index <- lambda_indices[[position]]
+        if (verbose) {
+          message(sprintf(
+            "  evaluating lambda %d/%d = %.6g",
+            lambda_index,
+            length(lambda_grid),
+            lambda_grid[lambda_index]
+          ))
+        }
+
+        baseline_fit <- cdmc_fit_baseline(
+          y_matrix = y_matrix,
+          x_matrices = x_matrices,
+          mask = train_mask,
+          weight_matrix = weight_matrix,
+          lambda = lambda_grid[lambda_index],
+          rank_max = rank_max,
+          fit_start = if (use_warm_starts) lambda_fit_start else NULL,
+          outer_maxit = outer_maxit,
+          fe_maxit = fe_maxit,
+          soft_maxit = soft_maxit,
+          tol = tol,
+          fe_tol = fe_tol,
+          verbose = FALSE
+        )
+
+        holdout_errors <- (y_matrix[holdout_mask] - baseline_fit$baseline_hat[holdout_mask]) ^ 2
+        lambda_scores_seq[position] <- if (is.null(weight_matrix)) {
+          mean(holdout_errors)
+        } else {
+          stats::weighted.mean(holdout_errors, w = weight_matrix[holdout_mask])
+        }
+        if (use_warm_starts) {
+          lambda_fit_start <- baseline_fit$fit_start
+        }
+      }
+
+      lambda_scores_seq
     }
 
-    scores[, round_index] <- lambda_scores
+    scores[lambda_indices, round_index] <- lambda_scores
+
+    if (use_screening && round_index < cv_rounds && length(active_indices) > cv_top_k) {
+      partial_means <- rowMeans(scores[active_indices, seq_len(round_index), drop = FALSE], na.rm = TRUE)
+      keep_candidates <- active_indices[order(partial_means, decreasing = FALSE)[seq_len(cv_top_k)]]
+      active_indices <- sort(keep_candidates)
+
+      if (verbose) {
+        message(sprintf(
+          "  retaining top %d lambda candidates for remaining rounds",
+          length(active_indices)
+        ))
+      }
+    }
   }
 
-  mean_scores <- rowMeans(scores)
+  rounds_evaluated <- rowSums(!is.na(scores))
+  mean_scores <- rowMeans(scores, na.rm = TRUE)
+  if (use_screening) {
+    mean_scores[rounds_evaluated < cv_rounds] <- Inf
+  }
   best_index <- which.min(mean_scores)
 
   list(
@@ -275,6 +428,15 @@ cdmc_tune_lambda <- function(
     cv_block_size_requested = cv_block_size,
     cv_workers = worker_count,
     cv_parallel = use_parallel,
+    cv_top_k = cv_top_k,
+    cv_screening = use_screening,
+    cv_rounds_evaluated = rounds_evaluated,
+    cv_coarse_to_fine = FALSE,
+    cv_coarse_nlambda = NULL,
+    cv_coarse_grid = NULL,
+    cv_coarse_selected_lambda = NULL,
+    cv_fine_grid = lambda_grid,
+    cv_warm_starts = use_warm_starts,
     cv_block_sizes_used = block_sizes_used,
     holdout_counts = holdout_counts
   )
