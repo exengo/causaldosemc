@@ -959,14 +959,6 @@ cdmc_bootstrap <- function(
   }
 
   use_parallel <- workers > 1L
-  if (use_parallel && identical(.Platform$OS.type, "windows")) {
-    warning(
-      "Parallel bootstrap currently uses multicore execution and is not available on Windows. Falling back to sequential execution.",
-      call. = FALSE
-    )
-    use_parallel <- FALSE
-    workers <- 1L
-  }
   worker_count <- if (use_parallel) min(workers, n_boot) else 1L
   replicate_seeds <- if (use_parallel) sample.int(.Machine$integer.max, n_boot, replace = TRUE) else integer(0)
 
@@ -1086,16 +1078,23 @@ cdmc_bootstrap <- function(
   }
 
   replicate_results <- if (use_parallel) {
-    parallel::mclapply(
+    cl <- parallel::makeCluster(worker_count)
+    on.exit(parallel::stopCluster(cl), add = TRUE)
+    parallel::clusterEvalQ(cl, library(causaldosemc))
+    parallel::clusterExport(
+      cl,
+      varlist = c("run_bootstrap_replicate", "replicate_seeds"),
+      envir = environment()
+    )
+    parallel::parLapplyLB(
+      cl,
       seq_len(n_boot),
       function(bootstrap_index) {
         run_bootstrap_replicate(
           bootstrap_index = bootstrap_index,
           replicate_seed = replicate_seeds[[bootstrap_index]]
         )
-      },
-      mc.cores = worker_count,
-      mc.set.seed = FALSE
+      }
     )
   } else {
     lapply(seq_len(n_boot), function(bootstrap_index) {

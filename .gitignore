@@ -28,3 +28,7 @@ tests/testthat/test_results.txt
 
 # AI files
 CLAUDE.md
+
+# Temporary files
+TEMP
+TEMP/*

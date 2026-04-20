@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Rscript -)",
+      "Bash(ps -o pid,etime,cmd --no-headers -C R)",
+      "Bash(awk '{print $1, $2, $11, $12, $13}')",
+      "Bash(ps -o pid,etimes,pcpu,pmem,cmd --sort=-etimes ax)",
+      "Bash(kill 3862660 3862661 3862662 3862663 4017366 4018484 4018485 4018486 4018487 4080949 4081199 4081200 4081201 4081202 4110916 4110986 4110987 4110988 4110989)",
+      "Bash(ps -o pid,etimes,pcpu,pmem --sort=-etimes ax)",
+      "Bash(ps -o pid,etimes,state,pcpu,pmem -p 4136976 4137919 4137920 4137921 4137922)",
+      "Bash(R CMD INSTALL . --no-multiarch --with-keep.source)",
+      "Bash(grep -v \"^Attaching\\\\|^The following\\\\|^$\\\\|timestamp\")"
+    ]
+  }
+}

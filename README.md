@@ -1,17 +1,11 @@
 # causaldosemc
 
-`causaldosemc` provides matrix-completion-based tools for causal estimation in
-panel data with a continuous treatment that can switch on and off over time.
-The package combines zero-dose masking, low-rank baseline estimation,
-distributed-lag treatment modeling, weighting, diagnostics, bootstrap
-uncertainty, and downstream dose-response summaries.
+`causaldosemc` provides matrix-completion-based tools for causal estimation in panel data with a continuous treatment that can switch on and off over time.
+The package combines zero-dose masking, low-rank baseline estimation, distributed-lag treatment modeling, weighting, diagnostics, bootstrap uncertainty, and downstream dose-response summaries.
 
 ## Status
 
-This is an experimental research package intended for empirical and
-methodological workflows. The public API is usable, but the package is still
-best treated as an actively developing GitHub release rather than a frozen
-long-term interface.
+This is an experimental research package intended for empirical and methodological workflows. The public API is usable, but the package is still best treated as an actively developing GitHub release rather than a frozen long-term interface.
 
 Current scope:
 
@@ -86,26 +80,17 @@ predict(
 )
 ```
 
-For empirical work, prefer blocked cross-validation whenever the data contain
-enough eligible zero-dose support to hold out contiguous control blocks safely.
-The heuristic lambda rule remains a fallback when support is too thin for a
-stable blocked tuning exercise.
+For empirical work, prefer blocked cross-validation whenever the data contain enough eligible zero-dose support to hold out contiguous control blocks safely.
+The heuristic lambda rule remains a fallback when support is too thin for a stable blocked tuning exercise.
 
 ## Main entry points
 
-- `cdmc_fit()`: staged or joint matrix-completion estimator for the baseline
-  counterfactual surface and treatment-effect layer.
-- `cdmc_dr_fit()`: cross-fitted doubly robust effect estimator with internal
-  Gaussian or kernel GPS weighting, fold-local balancing weights, or external
-  weights.
-- `cdmc_dose_response()`: post-fit dose-response modeling using linear,
-  spline, GAM, tree, or forest specifications.
-- `cdmc_dynamic_estimand()`: response, contrast, and slope summaries for
-  user-supplied treatment paths.
-- `cdmc_bootstrap()`: unit-level bootstrap inference for fits, downstream
-  estimands, and supported diagnostics.
-- `cdmc_sensitivity_scan()` and `cdmc_sensitivity_bounds()`: replay-based and
-  bounded-bias sensitivity workflows.
+- `cdmc_fit()`: staged or joint matrix-completion estimator for the baseline counterfactual surface and treatment-effect layer.
+- `cdmc_dr_fit()`: cross-fitted doubly robust effect estimator with internal Gaussian or kernel GPS weighting, fold-local balancing weights, or external weights.
+- `cdmc_dose_response()`: post-fit dose-response modeling using linear, spline, GAM, tree, or forest specifications.
+- `cdmc_dynamic_estimand()`: response, contrast, and slope summaries for user-supplied treatment paths.
+- `cdmc_bootstrap()`: unit-level bootstrap inference for fits, downstream estimands, and supported diagnostics.
+- `cdmc_sensitivity_scan()` and `cdmc_sensitivity_bounds()`: replay-based and bounded-bias sensitivity workflows.
 
 ## Vignettes
 
@@ -115,12 +100,11 @@ stable blocked tuning exercise.
 - [Dose-response and dynamic estimands](vignettes/dose-response-dynamics.Rmd)
 - [Manuscript-style case study](vignettes/policy-case-study.Rmd)
 
+After installation, run `browseVignettes("causaldosemc")` to open the rendered articles locally.
+
 ## Methodology note
 
 - [Methodology specification (PDF)](methodology.pdf)
-
-After installation, run `browseVignettes("causaldosemc")` to open the rendered
-articles locally.
 
 ## Development
 
@@ -128,6 +112,4 @@ articles locally.
 - Run a release-style package check from the repository root with `devtools::check(document = FALSE)`.
 - Build the source package from the repository root with `R CMD build .`.
 
-This repository tracks package source only. Local tarballs, ad hoc debugging
-scripts, test-output dumps, and editor settings are intentionally excluded from
-version control.
+This repository tracks package source only. Local tarballs, ad hoc debugging scripts, test-output dumps, and editor settings are intentionally excluded from version control.
