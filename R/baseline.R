@@ -11,7 +11,23 @@ cdmc_spectral_norm <- function(x) {
 }
 
 cdmc_shrink_singular_values <- function(x, lambda, rank_max) {
-  svd_fit <- base::svd(x)
+  # Use truncated SVD (irlba) when the matrix is large and rank_max is small
+  # relative to matrix dimensions — avoids computing all singular values/vectors.
+  n_min <- min(dim(x))
+  use_truncated <- n_min > 50L &&
+                   rank_max < n_min %/% 3L &&
+                   requireNamespace("irlba", quietly = TRUE)
+
+  svd_fit <- if (use_truncated) {
+    k <- min(rank_max + 3L, n_min - 1L)
+    tryCatch(
+      irlba::irlba(x, nv = k, nu = k, maxit = 300L),
+      error = function(e) base::svd(x)
+    )
+  } else {
+    base::svd(x)
+  }
+
   shrunk <- pmax(svd_fit$d - lambda, 0)
   keep <- which(shrunk > sqrt(.Machine$double.eps))
   if (length(keep) == 0L) {
@@ -158,6 +174,8 @@ cdmc_fit_baseline <- function(
   soft_fit <- NULL
   iteration <- 0L
 
+  pb <- if (verbose) cdmc_progress_bar("Baseline fitting", total = outer_maxit) else NULL
+
   for (iteration in seq_len(outer_maxit)) {
     nuisance_fit <- cdmc_fit_nuisance(
       y_matrix = y_matrix,
@@ -206,23 +224,30 @@ cdmc_fit_baseline <- function(
     }
 
     relative_change <- cdmc_relative_change(l_new, l_matrix)
-    if (verbose) {
-      message(sprintf(
-        "outer iteration %d: relative low-rank change = %.6g",
-        iteration,
-        relative_change
-      ))
-    }
 
     l_matrix <- l_new
     nuisance_start <- nuisance_fit
     warm_start <- soft_fit
+
+    if (verbose) {
+      if (!is.null(pb)) {
+        cdmc_progress_update(pb)
+      } else {
+        message(sprintf(
+          "outer iteration %d: relative low-rank change = %.6g",
+          iteration,
+          relative_change
+        ))
+      }
+    }
 
     if (relative_change < tol) {
       converged <- TRUE
       break
     }
   }
+
+  cdmc_progress_done(pb)
 
   final_nuisance <- cdmc_fit_nuisance(
     y_matrix = y_matrix,

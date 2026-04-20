@@ -20,7 +20,9 @@ Imports:
     stats
 Suggests:
     CBPS,
+    cli,
     gbm,
+    irlba,
     knitr,
     mgcv,
     ranger,

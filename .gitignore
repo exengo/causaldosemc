@@ -25,3 +25,6 @@ test_output.log
 test_output.txt
 vignettes/*.html
 tests/testthat/test_results.txt
+
+# AI files
+CLAUDE.md

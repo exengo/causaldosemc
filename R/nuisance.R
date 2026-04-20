@@ -90,27 +90,50 @@ cdmc_fit_nuisance <- function(
   }
 
   x_beta <- cdmc_covariate_contribution(x_matrices, gamma, n_units, n_times)
+
+  # Pre-compute weighted mask and axis counts once — these are loop-invariant.
+  # Using matrix-vector products (weighted_mask %*% beta and its transpose) instead of
+  # broadcasting alpha/beta into full n×T matrices saves ~2 O(n×T) allocations per iteration.
+  weighted_mask <- if (is.null(weights)) mask else weights * mask
+  weighted_mask[!mask] <- 0
+  weighted_mask_t <- t(weighted_mask)
+  counts_row <- rowSums(weighted_mask)
+  counts_col <- colSums(weighted_mask)
+
+  if (any(counts_row <= sqrt(.Machine$double.eps))) {
+    stop(
+      "Cannot estimate unit fixed effects because at least one unit has no eligible observations.",
+      call. = FALSE
+    )
+  }
+  if (any(counts_col <= sqrt(.Machine$double.eps))) {
+    stop(
+      "Cannot estimate time fixed effects because at least one time period has no eligible observations.",
+      call. = FALSE
+    )
+  }
+
   converged <- FALSE
   iteration <- 0L
 
   for (iteration in seq_len(maxit)) {
     adjusted <- y_matrix - l_matrix - x_beta
+    adjusted[!mask] <- 0
 
-    alpha_new <- cdmc_masked_row_means(
-      adjusted - matrix(beta, nrow = n_units, ncol = n_times, byrow = TRUE),
-      mask,
-      weights = weights
-    )
+    # Compute adjusted * weighted_mask once and reuse for both row and col sums.
+    adj_weighted <- adjusted * weighted_mask
+    adj_row_sums <- rowSums(adj_weighted)
+    adj_col_sums <- colSums(adj_weighted)
 
-    beta_new <- cdmc_masked_col_means(
-      adjusted - matrix(alpha_new, nrow = n_units, ncol = n_times),
-      mask,
-      weights = weights
-    )
+    # Row means of (adjusted - beta_broadcast): use matrix-vector product instead of broadcast.
+    alpha_new <- (adj_row_sums - as.vector(weighted_mask %*% beta)) / counts_row
+
+    # Col means of (adjusted - alpha_new_broadcast): same approach, pre-shift alpha_new.
+    beta_new <- (adj_col_sums - as.vector(weighted_mask_t %*% alpha_new)) / counts_col
 
     shift <- mean(alpha_new)
     alpha_new <- alpha_new - shift
-    beta_new <- beta_new + shift
+    beta_new  <- beta_new  + shift
 
     gamma_new <- cdmc_estimate_gamma(
       y_matrix = y_matrix,
@@ -136,7 +159,7 @@ cdmc_fit_nuisance <- function(
     )
 
     alpha <- alpha_new
-    beta <- beta_new
+    beta  <- beta_new
     gamma <- gamma_new
     x_beta <- x_beta_new
 

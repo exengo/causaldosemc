@@ -105,3 +105,18 @@ cdmc_build_sample_history <- function(lag_array, sample_indices, tau = NULL, inc
     x
   }
 }
+
+cdmc_progress_bar <- function(label, total) {
+  if (!requireNamespace("cli", quietly = TRUE)) return(NULL)
+  cli::cli_progress_bar(label, total = total, clear = FALSE, .auto_close = FALSE)
+}
+
+cdmc_progress_update <- function(pb) {
+  if (!is.null(pb)) cli::cli_progress_update(id = pb)
+  invisible(NULL)
+}
+
+cdmc_progress_done <- function(pb) {
+  if (!is.null(pb)) cli::cli_progress_done(id = pb)
+  invisible(NULL)
+}

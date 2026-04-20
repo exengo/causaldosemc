@@ -970,6 +970,9 @@ cdmc_bootstrap <- function(
   worker_count <- if (use_parallel) min(workers, n_boot) else 1L
   replicate_seeds <- if (use_parallel) sample.int(.Machine$integer.max, n_boot, replace = TRUE) else integer(0)
 
+  pb_boot <- NULL
+  boot_start_time <- proc.time()["elapsed"]
+
   source_object <- cdmc_bootstrap_source_object(object)
   original_columns <- cdmc_bootstrap_original_columns(object)
   bootstrap_spec <- cdmc_build_bootstrap_fit_spec(object, rerun_tuning = rerun_tuning)
@@ -1011,7 +1014,11 @@ cdmc_bootstrap <- function(
     }
 
     if (verbose && !use_parallel) {
-      message(sprintf("bootstrap replicate %d/%d", bootstrap_index, n_boot))
+      if (!is.null(pb_boot)) {
+        cdmc_progress_update(pb_boot)
+      } else {
+        message(sprintf("bootstrap replicate %d/%d", bootstrap_index, n_boot))
+      }
     }
 
     bootstrap_data <- cdmc_bootstrap_sample_data(
@@ -1064,8 +1071,18 @@ cdmc_bootstrap <- function(
     list(index = bootstrap_index, statistics = bootstrap_statistics, error = NULL)
   }
 
-  if (use_parallel && verbose) {
-    message(sprintf("running bootstrap in parallel with %d workers", worker_count))
+  if (verbose) {
+    if (use_parallel) {
+      message(sprintf(
+        "[causaldosemc] bootstrap: %d replicates on %d workers",
+        n_boot, worker_count
+      ))
+    } else {
+      pb_boot <- cdmc_progress_bar("Bootstrap replicates", total = n_boot)
+      if (is.null(pb_boot)) {
+        message(sprintf("[causaldosemc] bootstrap: %d replicates", n_boot))
+      }
+    }
   }
 
   replicate_results <- if (use_parallel) {
@@ -1093,6 +1110,15 @@ cdmc_bootstrap <- function(
     }
 
     bootstrap_draws[replicate_result$index, names(replicate_result$statistics)] <- replicate_result$statistics
+  }
+
+  if (verbose) {
+    cdmc_progress_done(pb_boot)
+    elapsed_secs <- proc.time()["elapsed"] - boot_start_time
+    message(sprintf(
+      "[causaldosemc] bootstrap: %d/%d successful in %.1fs",
+      n_boot - length(errors), n_boot, elapsed_secs
+    ))
   }
 
   simultaneous_result <- if (isTRUE(simultaneous)) {

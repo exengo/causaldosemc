@@ -200,22 +200,21 @@ cdmc_build_eligible_mask <- function(dose_matrix, zero_tolerance, washout = 0L) 
     return(eligible_mask)
   }
 
+  # Vectorized: loop over washout lag offsets (O(washout) iters) instead of
+  # over every unit × treated-time pair (O(n_units × treated) iters).
   n_times <- ncol(dose_matrix)
-  for (unit_index in seq_len(nrow(dose_matrix))) {
-    treated_times <- which(cdmc_active_dose_mask(dose_matrix[unit_index, , drop = FALSE], zero_tolerance = zero_tolerance))
-    if (length(treated_times) == 0L) {
-      next
-    }
+  active_mask <- cdmc_active_dose_mask(dose_matrix, zero_tolerance = zero_tolerance)
 
-    for (treated_time in treated_times) {
-      upper <- min(n_times, treated_time + washout)
-      if (treated_time < upper) {
-        eligible_mask[unit_index, seq.int(treated_time + 1L, upper)] <- FALSE
-      }
+  for (lag in seq_len(washout)) {
+    end_col <- n_times - lag
+    if (end_col >= 1L) {
+      eligible_mask[, seq.int(lag + 1L, n_times)] <-
+        eligible_mask[, seq.int(lag + 1L, n_times)] &
+        !active_mask[, seq_len(end_col), drop = FALSE]
     }
   }
 
-  eligible_mask & cdmc_zero_dose_mask(dose_matrix, zero_tolerance = zero_tolerance)
+  eligible_mask
 }
 
 cdmc_validate_mask_support <- function(mask, unit_message, time_message, size_message) {
