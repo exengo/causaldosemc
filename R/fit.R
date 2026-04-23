@@ -346,11 +346,12 @@ cdmc_fit <- function(
   lambda_min_ratio = 0.05,
   cv_rounds = 5L,
   cv_block_size = 2L,
-  cv_workers = 1L,
+  workers = 1L,
   cv_top_k = NULL,
   cv_coarse_to_fine = FALSE,
   cv_coarse_nlambda = NULL,
   cv_warm_starts = FALSE,
+  lambda_control = NULL,
   washout = 0L,
   lag_order = 0L,
   effect_model = c("linear", "spline", "none"),
@@ -386,10 +387,10 @@ cdmc_fit <- function(
   nlambda <- as.integer(nlambda)
   cv_rounds <- as.integer(cv_rounds)
   cv_block_size <- as.integer(cv_block_size)
-  if (!is.numeric(cv_workers) || length(cv_workers) != 1L || !is.finite(cv_workers) || cv_workers < 1 || cv_workers != floor(cv_workers)) {
-    stop("cv_workers must be a positive integer.", call. = FALSE)
+  if (!is.numeric(workers) || length(workers) != 1L || !is.finite(workers) || workers < 1 || workers != floor(workers)) {
+    stop("workers must be a positive integer.", call. = FALSE)
   }
-  cv_workers <- as.integer(cv_workers)
+  workers <- as.integer(workers)
   if (!is.null(cv_top_k)) {
     if (!is.numeric(cv_top_k) || length(cv_top_k) != 1L || !is.finite(cv_top_k) || cv_top_k < 1 || cv_top_k != floor(cv_top_k)) {
       stop("cv_top_k must be NULL or a positive integer.", call. = FALSE)
@@ -410,6 +411,34 @@ cdmc_fit <- function(
     stop("cv_warm_starts must be TRUE or FALSE.", call. = FALSE)
   }
   cv_warm_starts <- isTRUE(cv_warm_starts)
+
+  resolved_lambda_control <- cdmc_resolve_lambda_control(
+    lambda_control,
+    lambda = lambda,
+    fraction = lambda_fraction,
+    selection = lambda_selection,
+    grid = lambda_grid,
+    nlambda = nlambda,
+    min_ratio = lambda_min_ratio,
+    cv_rounds = cv_rounds,
+    cv_block_size = cv_block_size,
+    cv_top_k = cv_top_k,
+    cv_coarse_to_fine = cv_coarse_to_fine,
+    cv_coarse_nlambda = cv_coarse_nlambda,
+    cv_warm_starts = cv_warm_starts
+  )
+  lambda <- resolved_lambda_control$lambda
+  lambda_fraction <- resolved_lambda_control$fraction
+  lambda_selection <- resolved_lambda_control$selection
+  lambda_grid <- resolved_lambda_control$grid
+  nlambda <- resolved_lambda_control$nlambda
+  lambda_min_ratio <- resolved_lambda_control$min_ratio
+  cv_rounds <- resolved_lambda_control$cv_rounds
+  cv_block_size <- resolved_lambda_control$cv_block_size
+  cv_top_k <- resolved_lambda_control$cv_top_k
+  cv_coarse_to_fine <- resolved_lambda_control$cv_coarse_to_fine
+  cv_coarse_nlambda <- resolved_lambda_control$cv_coarse_nlambda
+  cv_warm_starts <- resolved_lambda_control$cv_warm_starts
 
   if (!is.numeric(effect_df) || length(effect_df) != 1L || !is.finite(effect_df) || effect_df < 1) {
     stop("effect_df must be a positive integer.", call. = FALSE)
@@ -491,7 +520,7 @@ cdmc_fit <- function(
     lambda_min_ratio = lambda_min_ratio,
     cv_rounds = cv_rounds,
     cv_block_size = cv_block_size,
-    cv_workers = cv_workers,
+    cv_workers = workers,
     cv_top_k = cv_top_k,
     cv_coarse_to_fine = cv_coarse_to_fine,
     cv_coarse_nlambda = cv_coarse_nlambda,
@@ -571,7 +600,7 @@ cdmc_fit <- function(
       lambda_min_ratio = lambda_min_ratio,
       cv_rounds = cv_rounds,
       cv_block_size = cv_block_size,
-      cv_workers = cv_workers,
+      workers = workers,
       cv_top_k = cv_top_k,
       cv_coarse_to_fine = cv_coarse_to_fine,
       cv_coarse_nlambda = cv_coarse_nlambda,

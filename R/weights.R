@@ -1121,8 +1121,8 @@ cdmc_resolve_adaptive_balance_methods <- function(methods = NULL) {
     )
   }
 
-  if ("cbps" %in% resolved && !requireNamespace("CBPS", quietly = TRUE)) {
-    stop("The CBPS package must be installed when methods includes 'cbps'.", call. = FALSE)
+  if ("cbps" %in% resolved) {
+    cdmc_assert_installed("CBPS", reason = "when methods includes 'cbps'")
   }
 
   resolved

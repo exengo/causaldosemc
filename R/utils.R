@@ -1,10 +1,58 @@
-cdmc_assert_installed <- function(pkg) {
+cdmc_assert_installed <- function(pkg, reason = NULL) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
-    stop(
-      sprintf("Package '%s' must be installed to use causaldosemc.", pkg),
-      call. = FALSE
-    )
+    msg <- if (is.null(reason)) {
+      sprintf("Package '%s' must be installed to use causaldosemc.", pkg)
+    } else {
+      sprintf("Package '%s' must be installed %s.", pkg, reason)
+    }
+    stop(msg, call. = FALSE)
   }
+}
+
+# Generic scalar validator/coercer used by the various cdmc_resolve_* helpers.
+# - type = "integer" coerces via as.integer() and requires the value to equal
+#   floor(value) when strict_int = TRUE.
+# - min / max are inclusive unless strict_lower / strict_upper.
+# - allow_null = TRUE returns NULL unchanged.
+cdmc_resolve_scalar <- function(
+  value,
+  name,
+  type = c("numeric", "integer"),
+  min = NULL,
+  max = NULL,
+  strict_lower = FALSE,
+  strict_upper = FALSE,
+  allow_null = FALSE,
+  strict_int = TRUE
+) {
+  type <- match.arg(type)
+
+  if (is.null(value)) {
+    if (allow_null) {
+      return(NULL)
+    }
+    stop(sprintf("%s must not be NULL.", name), call. = FALSE)
+  }
+
+  prefix <- if (allow_null) sprintf("%s must be NULL or", name) else sprintf("%s must be", name)
+  kind <- if (identical(type, "integer")) "a positive integer" else "a single positive numeric value"
+
+  ok <- is.numeric(value) && length(value) == 1L && is.finite(value)
+  if (ok && !is.null(min)) {
+    ok <- if (strict_lower) value > min else value >= min
+  }
+  if (ok && !is.null(max)) {
+    ok <- if (strict_upper) value < max else value <= max
+  }
+  if (ok && identical(type, "integer") && strict_int) {
+    ok <- value == floor(value)
+  }
+
+  if (!ok) {
+    stop(sprintf("%s %s.", prefix, kind), call. = FALSE)
+  }
+
+  if (identical(type, "integer")) as.integer(value) else as.numeric(value)
 }
 
 cdmc_relative_change <- function(new_matrix, old_matrix) {

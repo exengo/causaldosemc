@@ -27,11 +27,12 @@ cdmc_fit(
   lambda_min_ratio = 0.05,
   cv_rounds = 5L,
   cv_block_size = 2L,
-  cv_workers = 1L,
+  workers = 1L,
   cv_top_k = NULL,
   cv_coarse_to_fine = FALSE,
   cv_coarse_nlambda = NULL,
   cv_warm_starts = FALSE,
+  lambda_control = NULL,
   washout = 0L,
   lag_order = 0L,
   effect_model = c("linear", "spline", "none"),
@@ -122,9 +123,9 @@ cdmc_fit(
   when \code{lambda_selection = "cv"}. The implementation may fall back to smaller
   blocks if the requested size cannot produce a valid holdout set.}
 
-  \item{cv_workers}{Number of workers used when evaluating candidate lambda
+  \item{workers}{Number of workers used when evaluating candidate lambda
   values inside each blocked cross-validation round. Set
-  \code{cv_workers = 1} for sequential evaluation (default). Values greater
+  \code{workers = 1} for sequential evaluation (default). Values greater
   than 1 enable parallel lambda scoring via multicore execution on supported
   platforms.}
 
@@ -148,11 +149,22 @@ cdmc_fit(
   candidates.}
 
   \item{cv_warm_starts}{Logical flag controlling whether sequential blocked
-  cross-validation (\code{cv_workers = 1}) should warm-start each smaller
+  cross-validation (\code{workers = 1}) should warm-start each smaller
   lambda candidate from the previous candidate's baseline fit state. This can
   reduce runtime for large grids but may change the tuned lambda because the
   baseline objective is solved by alternating updates. Defaults to
   \code{FALSE}.}
+
+  \item{lambda_control}{Optional \code{cdmc_lambda_control} object bundling
+  every lambda / CV scalar (see \code{\link{cdmc_lambda_control}}). When
+  supplied, its fields override the corresponding scalar arguments
+  (\code{lambda}, \code{lambda_fraction}, \code{lambda_selection},
+  \code{lambda_grid}, \code{nlambda}, \code{lambda_min_ratio},
+  \code{cv_rounds}, \code{cv_block_size}, \code{cv_top_k},
+  \code{cv_coarse_to_fine}, \code{cv_coarse_nlambda},
+  \code{cv_warm_starts}). The legacy scalars remain on the public API for
+  back-compatibility and continue to work unchanged when
+  \code{lambda_control = NULL} (the default).}
 
   \item{washout}{Nonnegative integer giving the number of post-treatment periods
   to remove from the eligible zero-dose control set after each nonzero dose.

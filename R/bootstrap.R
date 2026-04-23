@@ -669,7 +669,7 @@ cdmc_build_bootstrap_fit_spec <- function(object, rerun_tuning = NULL) {
         lambda_min_ratio = 0.05,
         cv_rounds = object$lambda_tuning$cv_rounds %||% 5L,
         cv_block_size = object$lambda_tuning$cv_block_size_requested %||% 2L,
-        cv_workers = object$fit_control$cv_workers %||% 1L,
+        cv_workers = object$fit_control$workers %||% object$fit_control$cv_workers %||% 1L,
         cv_top_k = object$fit_control$cv_top_k %||% NULL,
         cv_coarse_to_fine = object$fit_control$cv_coarse_to_fine %||% FALSE,
         cv_coarse_nlambda = object$fit_control$cv_coarse_nlambda %||% NULL,
@@ -1175,4 +1175,8 @@ print.cdmc_bootstrap <- function(x, ...) {
   }
   print(x$summary, row.names = FALSE)
   invisible(x)
+}
+
+summary.cdmc_bootstrap <- function(object, ...) {
+  object$summary
 }

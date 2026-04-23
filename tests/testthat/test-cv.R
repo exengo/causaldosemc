@@ -39,7 +39,7 @@ test_that("cdmc_fit can tune lambda with blocked cross-validation", {
   expect_true(all(fit$lambda_tuning$holdout_counts > 0))
 })
 
-test_that("cdmc_fit validates cv_workers", {
+test_that("cdmc_fit validates workers", {
   panel <- simulate_cdmc_data(
     n_units = 8,
     n_times = 8,
@@ -66,13 +66,13 @@ test_that("cdmc_fit validates cv_workers", {
       lambda_grid = c(0.4, 0.2),
       cv_rounds = 2,
       cv_block_size = 1,
-      cv_workers = 0,
+      workers = 0,
       rank_max = 3,
       washout = 1,
       lag_order = 1,
       seed = 109
     ),
-    "cv_workers must be a positive integer"
+    "workers must be a positive integer"
   )
 
   expect_error(
@@ -88,13 +88,13 @@ test_that("cdmc_fit validates cv_workers", {
       lambda_grid = c(0.4, 0.2),
       cv_rounds = 2,
       cv_block_size = 1,
-      cv_workers = 1.5,
+      workers = 1.5,
       rank_max = 3,
       washout = 1,
       lag_order = 1,
       seed = 109
     ),
-    "cv_workers must be a positive integer"
+    "workers must be a positive integer"
   )
 
   expect_error(
@@ -171,7 +171,7 @@ test_that("cdmc_fit parallel cv tuning matches sequential tuning", {
     lambda_grid = c(0.4, 0.2, 0.1),
     cv_rounds = 2,
     cv_block_size = 1,
-    cv_workers = 1,
+    workers = 1,
     rank_max = 3,
     washout = 1,
     lag_order = 1,
@@ -190,7 +190,7 @@ test_that("cdmc_fit parallel cv tuning matches sequential tuning", {
     lambda_grid = c(0.4, 0.2, 0.1),
     cv_rounds = 2,
     cv_block_size = 1,
-    cv_workers = 2,
+    workers = 2,
     rank_max = 3,
     washout = 1,
     lag_order = 1,
@@ -234,7 +234,7 @@ test_that("cdmc_fit can opt into sequential cv warm starts", {
     lambda_grid = c(0.4, 0.2, 0.1),
     cv_rounds = 2,
     cv_block_size = 1,
-    cv_workers = 1,
+    workers = 1,
     cv_warm_starts = TRUE,
     rank_max = 3,
     washout = 1,
@@ -274,7 +274,7 @@ test_that("cdmc_fit can screen lambda candidates during cv", {
     cv_rounds = 3,
     cv_block_size = 1,
     cv_top_k = 2,
-    cv_workers = 1,
+    workers = 1,
     rank_max = 3,
     washout = 1,
     lag_order = 1,
@@ -316,7 +316,7 @@ test_that("cdmc_fit can run coarse-to-fine cv tuning", {
     cv_block_size = 1,
     cv_coarse_to_fine = TRUE,
     cv_coarse_nlambda = 4,
-    cv_workers = 1,
+    workers = 1,
     rank_max = 3,
     washout = 1,
     lag_order = 1,

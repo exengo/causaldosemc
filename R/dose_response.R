@@ -609,3 +609,13 @@ print.cdmc_dose_response <- function(x, ...) {
 
   invisible(x)
 }
+
+summary.cdmc_dose_response <- function(object, ...) {
+  list(
+    model = object$model,
+    lag_order = object$lag_order,
+    n = nrow(object$history),
+    include_zero_dose = object$include_zero_dose,
+    coefficients = object$coefficients
+  )
+}

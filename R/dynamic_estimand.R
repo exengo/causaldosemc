@@ -378,3 +378,7 @@ print.cdmc_dynamic_estimand <- function(x, ...) {
 
   invisible(x)
 }
+
+summary.cdmc_dynamic_estimand <- function(object, ...) {
+  object$estimate_table
+}

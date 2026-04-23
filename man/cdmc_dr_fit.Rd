@@ -68,6 +68,7 @@ cdmc_dr_fit(
   cv_coarse_to_fine = FALSE,
   cv_coarse_nlambda = NULL,
   cv_warm_starts = FALSE,
+  lambda_control = NULL,
   washout = 0L,
   lag_order = 0L,
   outer_maxit = 20L,
@@ -340,9 +341,55 @@ cdmc_dr_fit(
   \code{cv_workers = 1} tuning to reuse baseline fit state across lambda
   candidates within each fold.}
 
+  \item{lambda_control}{Optional \code{cdmc_lambda_control} object bundling
+  every lambda / CV scalar (see \code{\link{cdmc_lambda_control}}). When
+  supplied, its fields override the corresponding scalar arguments listed
+  above. The legacy scalars remain on the public API for back-compatibility
+  and continue to work unchanged when \code{lambda_control = NULL} (the
+  default).}
+
   \item{x}{A \code{cdmc_dr_fit} object.}
 
   \item{...}{Unused additional arguments for the print method.}
+}
+\section{Three orthogonal design flags}{
+
+\code{cdmc_dr_fit()} exposes three independent design choices that should not
+be conflated. They can be set in any combination and are useful as robustness
+contrasts:
+
+\describe{
+  \item{\code{dr_score} (\code{"aipw"} default, or \code{"plr"})}{Selects
+    the cross-fit score. \code{"aipw"} forms the augmented pseudo-outcome
+    \eqn{\hat\tau_{it} + w_{it}(Y_{it} - \hat Y_{it}^{(0)} - \hat\tau_{it})}
+    and regresses it on the dose-lag design (doubly robust: bias vanishes if
+    either the baseline or the GPS weights are correct). \code{"plr"} uses
+    the Robinson partialling-out score: it fits a separate conditional-mean
+    model \eqn{\hat g(X_{it}) = E[D_{it} \mid X_{it}, t]} on each train fold
+    via the same \code{gps_model} family, residualises the holdout dose lags
+    as \eqn{D_{it} - \hat g(X_{it})}, and regresses outcome residuals on the
+    residualised lags without GPS reweighting.}
+  \item{\code{baseline_weighting} (\code{"gps"} default, or \code{"none"})}{
+    Controls whether the train-fold matrix-completion baseline is fit weighted
+    by the per-cell GPS / balancing weights (\code{"gps"}, preserves the AIPW
+    orthogonality argument under fixed train-fold weights) or unweighted
+    (\code{"none"}, fastest and closer to a classical AIPW argument in which
+    the baseline nuisance is estimated independently of the propensity
+    nuisance).}
+  \item{\code{weight_method} (\code{"gaussian_gps"}, \code{"kernel_gps"},
+    \code{"cbps"}, \code{"entropy_balance"}, \code{"kernel_balance"},
+    \code{"adaptive_balance"}, or \code{"external"} when \code{weights} are
+    supplied)}{Selects the per-cell weighting scheme used by both the train
+    baseline (when \code{baseline_weighting = "gps"}) and the AIPW
+    augmentation. Has no effect on \code{dr_score = "plr"} consistency, only
+    on efficiency.}
+}
+
+Use \code{\link{cdmc_dr_score_contrast}} to compare two fits that differ in
+\code{dr_score} (typically \code{"aipw"} vs.\ \code{"plr"}) on the same panel
+as a robustness check; substantial disagreement, particularly at
+\code{dose_lag0}, signals that one of the nuisances is poorly specified. The
+\code{summary()} method reports which combination of flags was used.
 }
 \details{
 The function partitions units into folds, or reuses the supplied
@@ -511,8 +558,11 @@ print(fit_adaptive_balance)
 }
 }
 \seealso{
-\code{\link{cdmc_fit}}, \code{\link{cdmc_bootstrap}}, and
-\code{\link{cdmc_adaptive_balance_weights}},
+\code{\link{cdmc_fit}}, \code{\link{cdmc_bootstrap}},
+\code{\link{cdmc_dr_score_contrast}} for AIPW vs.\ PLR robustness contrasts,
+and the weighting helpers \code{\link{cdmc_adaptive_balance_weights}},
 \code{\link{cdmc_cbps_weights}}, \code{\link{cdmc_entropy_balance_weights}},
-\code{\link{cdmc_kernel_balance_weights}}.
+\code{\link{cdmc_kernel_balance_weights}}. The \code{dr-weighting} vignette
+(\code{vignette("dr-weighting", package = "causaldosemc")}) walks through the
+three orthogonal flags with worked examples.
 }
