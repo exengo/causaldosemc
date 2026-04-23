@@ -279,3 +279,111 @@ cdmc_fit_baseline <- function(
     effective_rank = if (is.null(soft_fit)) 0L else sum(soft_fit$d > sqrt(.Machine$double.eps))
   )
 }
+# Holdout baseline prediction utilities for cross-fitted DR estimation.
+# Extracted from dr_fit.R to co-locate with train-time SVT baseline code.
+
+cdmc_validate_holdout_support <- function(eligible_mask) {
+  if (any(rowSums(eligible_mask) == 0L)) {
+    stop(
+      "Each holdout unit must retain at least one eligible zero-dose observation for cross-fitted baseline prediction.",
+      call. = FALSE
+    )
+  }
+}
+
+cdmc_extract_time_basis <- function(baseline_fit, n_times) {
+  soft_fit <- baseline_fit$soft_fit
+  if (is.null(soft_fit) || is.null(soft_fit$v) || length(soft_fit$d) == 0L) {
+    return(matrix(0, nrow = n_times, ncol = 0L))
+  }
+
+  sweep(soft_fit$v, 2, soft_fit$d, FUN = "*")
+}
+
+cdmc_predict_holdout_baseline <- function(object, prepared, eligible_mask, weight_matrix = NULL,
+                                          ridge_fraction = 1e-3) {
+  if (!inherits(object, "cdmc_fit")) {
+    stop("object must inherit from 'cdmc_fit'.", call. = FALSE)
+  }
+
+  cdmc_validate_holdout_support(eligible_mask)
+
+  n_units <- prepared$n_units
+  n_times <- prepared$n_times
+  nuisance_fit <- object$baseline$nuisance
+  basis <- cdmc_extract_time_basis(object$baseline, n_times = n_times)
+  x_beta <- cdmc_covariate_contribution(
+    x_matrices = prepared$x_matrices,
+    gamma = nuisance_fit$gamma,
+    n_units = n_units,
+    n_times = n_times
+  )
+
+  baseline_hat <- matrix(0, nrow = n_units, ncol = n_times)
+  low_rank_hat <- matrix(0, nrow = n_units, ncol = n_times)
+  alpha_hat <- numeric(n_units)
+
+  # Ridge shrinkage toward zero loadings on the per-unit factor regression.
+  # Stabilizes the fit when the holdout unit has few observed periods relative
+  # to the number of latent factors. Penalty is scale-invariant: proportional
+  # to the average squared design column norm. Intercept is not penalized.
+  for (unit_index in seq_len(n_units)) {
+    row_mask <- eligible_mask[unit_index, ]
+    response <- prepared$y_matrix[unit_index, row_mask] - nuisance_fit$beta[row_mask] - x_beta[unit_index, row_mask]
+    design <- cbind(1, basis[row_mask, , drop = FALSE])
+    row_weights <- if (is.null(weight_matrix)) NULL else weight_matrix[unit_index, row_mask]
+
+    n_obs <- length(response)
+    n_coef <- ncol(design)
+    if (n_obs == 0L || n_coef == 0L) {
+      next
+    }
+
+    if (is.null(row_weights)) {
+      xtx <- crossprod(design)
+      xty <- crossprod(design, response)
+    } else {
+      sw <- sqrt(pmax(row_weights, 0))
+      design_w <- design * sw
+      response_w <- response * sw
+      xtx <- crossprod(design_w)
+      xty <- crossprod(design_w, response_w)
+    }
+
+    if (ridge_fraction > 0 && n_coef > 1L) {
+      diag_xtx <- diag(xtx)
+      avg_scale <- mean(diag_xtx[-1L])
+      if (is.finite(avg_scale) && avg_scale > 0) {
+        penalty <- ridge_fraction * avg_scale
+        ridge_diag <- c(0, rep(penalty, n_coef - 1L))
+        xtx <- xtx + diag(ridge_diag, n_coef, n_coef)
+      }
+    }
+
+    coefficients <- tryCatch(
+      as.vector(solve(xtx, xty)),
+      error = function(e) {
+        sol <- tryCatch(as.vector(qr.coef(qr(xtx, LAPACK = TRUE), xty)), error = function(e2) NULL)
+        if (is.null(sol)) rep(0, n_coef) else sol
+      }
+    )
+    coefficients[!is.finite(coefficients)] <- 0
+    alpha_hat[unit_index] <- coefficients[[1L]]
+
+    if (length(coefficients) > 1L) {
+      low_rank_hat[unit_index, ] <- as.vector(basis %*% coefficients[-1L])
+    }
+  }
+
+  baseline_hat <- matrix(alpha_hat, nrow = n_units, ncol = n_times) +
+    matrix(nuisance_fit$beta, nrow = n_units, ncol = n_times, byrow = TRUE) +
+    x_beta +
+    low_rank_hat
+
+  list(
+    baseline_hat = baseline_hat,
+    alpha = alpha_hat,
+    low_rank = low_rank_hat,
+    time_basis = basis
+  )
+}

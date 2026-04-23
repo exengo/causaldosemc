@@ -123,8 +123,15 @@ cdmc_joint_placebo_test <- function(
   )
 
   if (is.null(equivalence_margin)) {
-    fisher_statistic <- -2 * sum(log(summary_table$p_value))
-    joint_p_value <- stats::pchisq(fisher_statistic, df = 2L * nrow(summary_table), lower.tail = FALSE)
+    # Holm-Bonferroni controls FWER under arbitrary dependence between the
+    # placebo windows, which is appropriate here because the windows share
+    # the same baseline fit and overlapping covariate history. Fisher's
+    # combination assumes independence and is anti-conservative for these
+    # tests.
+    raw_p_values <- summary_table$p_value
+    holm_adjusted <- stats::p.adjust(raw_p_values, method = "holm")
+    joint_p_value <- if (length(holm_adjusted) > 0L) min(holm_adjusted, na.rm = TRUE) else NA_real_
+    summary_table$adjusted_p_value <- holm_adjusted
 
     result <- list(
       call = match.call(),
@@ -134,10 +141,10 @@ cdmc_joint_placebo_test <- function(
       equivalence_margin = NULL,
       window_table = summary_table,
       tests = summary_table,
-      method = "fisher",
-      statistic = fisher_statistic,
+      method = "holm",
+      statistic = if (length(raw_p_values) > 0L) min(raw_p_values, na.rm = TRUE) else NA_real_,
       joint_p_value = joint_p_value,
-      passed = joint_p_value >= alpha,
+      passed = is.finite(joint_p_value) && joint_p_value >= alpha,
       rerun_tuning = isTRUE(rerun_tuning),
       components = placebo_results,
       fit_object = object

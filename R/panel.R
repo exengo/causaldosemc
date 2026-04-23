@@ -202,15 +202,23 @@ cdmc_build_eligible_mask <- function(dose_matrix, zero_tolerance, washout = 0L) 
 
   # Vectorized: loop over washout lag offsets (O(washout) iters) instead of
   # over every unit × treated-time pair (O(n_units × treated) iters).
+  #
+  # Treat unobserved (NA) dose cells as *potentially active* for washout
+  # propagation: we cannot rule out that a missing pre-period was treated, and
+  # admitting the next observed zero-dose cell as a control would violate the
+  # washout assumption. NA cells themselves are not eligible because
+  # cdmc_zero_dose_mask requires `!is.na`.
   n_times <- ncol(dose_matrix)
-  active_mask <- cdmc_active_dose_mask(dose_matrix, zero_tolerance = zero_tolerance)
+  active_or_unknown_mask <-
+    cdmc_active_dose_mask(dose_matrix, zero_tolerance = zero_tolerance) |
+      is.na(dose_matrix)
 
   for (lag in seq_len(washout)) {
     end_col <- n_times - lag
     if (end_col >= 1L) {
       eligible_mask[, seq.int(lag + 1L, n_times)] <-
         eligible_mask[, seq.int(lag + 1L, n_times)] &
-        !active_mask[, seq_len(end_col), drop = FALSE]
+        !active_or_unknown_mask[, seq_len(end_col), drop = FALSE]
     }
   }
 

@@ -49,13 +49,15 @@ cdmc_dr_fit(
   kernel_balance_reltol = 1e-8,
   stabilize_weights = TRUE,
   max_weight = "adaptive",
+  baseline_weighting = c("gps", "none"),
+  dr_score = c("aipw", "plr"),
   n_folds = 2L,
   dr_workers = 1L,
   fold_assignments = NULL,
   lambda = NULL,
   rank_max = NULL,
   lambda_fraction = 0.25,
-  lambda_selection = c("heuristic", "cv"),
+  lambda_selection = c("cv", "heuristic"),
   lambda_grid = NULL,
   nlambda = 5L,
   lambda_min_ratio = 0.05,
@@ -278,6 +280,31 @@ cdmc_dr_fit(
   99th percentile of the fold-local training weights and \eqn{\sqrt{n}} for
   that training sample. Supply \code{NULL} to disable clipping or a single
   positive numeric value to impose a fixed cap.}
+
+  \item{baseline_weighting}{Controls whether the train-fold matrix-completion
+  baseline is fit with GPS/balancing weights. \code{"gps"} (default, matches
+  historical behaviour) weights the train baseline by the same per-cell
+  weights used in the augmentation term, tilting the imputed counterfactual
+  surface toward the treatment-relevant covariate distribution. \code{"none"}
+  fits the baseline unweighted, which is the canonical AIPW configuration:
+  asymptotic orthogonality only requires the augmentation term to carry the
+  weights. The unweighted choice can reduce variance when the dose-response
+  surface is well-modeled across the full covariate distribution; the
+  weighted choice can reduce bias when the surface is mainly smooth in the
+  treatment-relevant region.}
+
+  \item{dr_score}{Selects the orthogonal score used to combine the train-fold
+  baseline with the holdout dose history. \code{"aipw"} (default, matches
+  historical behaviour) computes the weighted augmented IPW pseudo-outcome
+  \eqn{\hat\tau_{it} + w_{it}(Y_{it} - \hat Y_{it}^{(0)} - \hat\tau_{it})}
+  per cell and regresses it on the dose-lag design. \code{"plr"} implements
+  the Robinson partially-linear (Frisch-Waugh) score: a separate
+  conditional-mean model \eqn{\hat g(X_{it}) = E[D|X,t]} is fit on each
+  train fold using the same \code{gps_model} family, the holdout dose lags
+  are residualized as \eqn{D_{it} - \hat g(X_{it})}, and the outcome
+  residuals are regressed on the residualized lags without GPS reweighting.
+  PLR provides a useful second leg for robustness checks because its
+  consistency does not require the GPS weights to be correctly normalised.}
 
   \item{n_folds}{Number of unit folds used for cross-fitting.}
 

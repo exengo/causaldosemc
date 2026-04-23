@@ -227,7 +227,69 @@ cdmc_scia_conditioning_table <- function(prepared) {
   )
 }
 
-cdmc_scia_compare_restrictions <- function(prepared, restricted_fit, restriction_blocks, alpha = 0.05, p_adjust_method = c("holm", "none")) {
+cdmc_cluster_robust_vcov <- function(model, cluster_ids) {
+  # CR1-style cluster-robust covariance for stats::lm objects.
+  # V = (X'X)^{-1} * sum_g X_g' e_g e_g' X_g * (X'X)^{-1} * G/(G-1) * (n-1)/(n-k)
+  X <- stats::model.matrix(model)
+  e <- stats::residuals(model)
+  if (length(cluster_ids) != nrow(X)) {
+    return(NULL)
+  }
+  keep <- !is.na(e)
+  X <- X[keep, , drop = FALSE]
+  e <- e[keep]
+  cluster_ids <- cluster_ids[keep]
+  groups <- split(seq_along(e), cluster_ids)
+  G <- length(groups)
+  n <- nrow(X)
+  k <- ncol(X)
+  if (G < 2L || n <= k) {
+    return(NULL)
+  }
+  XtX_inv <- tryCatch(solve(crossprod(X)), error = function(err) NULL)
+  if (is.null(XtX_inv)) return(NULL)
+  meat <- matrix(0, k, k)
+  for (idx in groups) {
+    Xg <- X[idx, , drop = FALSE]
+    eg <- e[idx]
+    score <- crossprod(Xg, eg)
+    meat <- meat + tcrossprod(score)
+  }
+  finite_correction <- (G / (G - 1L)) * ((n - 1L) / (n - k))
+  V <- XtX_inv %*% meat %*% XtX_inv * finite_correction
+  rownames(V) <- colnames(X)
+  colnames(V) <- colnames(X)
+  V
+}
+
+cdmc_cluster_wald_test <- function(model, terms, cluster_ids) {
+  # Wald F-style test on a subset of coefficients with cluster-robust V.
+  V <- cdmc_cluster_robust_vcov(model, cluster_ids)
+  if (is.null(V)) {
+    return(list(f_statistic = NA_real_, df1 = NA_real_, df2 = NA_real_, p_value = NA_real_))
+  }
+  beta <- stats::coef(model)
+  available <- intersect(terms, names(beta))
+  if (length(available) == 0L) {
+    return(list(f_statistic = NA_real_, df1 = NA_real_, df2 = NA_real_, p_value = NA_real_))
+  }
+  beta_k <- beta[available]
+  V_kk <- V[available, available, drop = FALSE]
+  V_kk_inv <- tryCatch(solve(V_kk), error = function(e) NULL)
+  if (is.null(V_kk_inv)) {
+    return(list(f_statistic = NA_real_, df1 = NA_real_, df2 = NA_real_, p_value = NA_real_))
+  }
+  q <- length(available)
+  G <- length(unique(cluster_ids[!is.na(stats::residuals(model))]))
+  wald <- as.numeric(t(beta_k) %*% V_kk_inv %*% beta_k)
+  f_stat <- wald / q
+  df1 <- q
+  df2 <- max(G - 1L, 1L)
+  p_value <- stats::pf(f_stat, df1 = df1, df2 = df2, lower.tail = FALSE)
+  list(f_statistic = f_stat, df1 = df1, df2 = df2, p_value = p_value)
+}
+
+cdmc_scia_compare_restrictions <- function(prepared, restricted_fit, restriction_blocks, alpha = 0.05, p_adjust_method = c("holm", "none"), cluster_ids = NULL) {
   p_adjust_method <- match.arg(p_adjust_method)
 
   rows <- lapply(names(restriction_blocks), function(block_name) {
@@ -238,15 +300,22 @@ cdmc_scia_compare_restrictions <- function(prepared, restricted_fit, restriction
       response = ".cdmc_current_dose"
     )
     block_fit <- stats::lm(formula = block_formula, data = prepared$sample)
-    comparison <- stats::anova(restricted_fit, block_fit)
+    cluster_test <- if (!is.null(cluster_ids)) {
+      cdmc_cluster_wald_test(block_fit, terms = block_terms, cluster_ids = cluster_ids)
+    } else {
+      list(f_statistic = NA_real_, df1 = NA_real_, df2 = NA_real_, p_value = NA_real_)
+    }
+    iid_comparison <- stats::anova(restricted_fit, block_fit)
 
     data.frame(
       restriction_name = block_name,
       lags = paste(block_lags, collapse = ","),
       terms = paste(block_terms, collapse = ", "),
       n_terms = length(block_terms),
-      f_statistic = if (nrow(comparison) >= 2L) comparison$F[2L] else NA_real_,
-      p_value = if (nrow(comparison) >= 2L) comparison$`Pr(>F)`[2L] else NA_real_,
+      f_statistic = if (is.finite(cluster_test$f_statistic)) cluster_test$f_statistic else if (nrow(iid_comparison) >= 2L) iid_comparison$F[2L] else NA_real_,
+      p_value = if (is.finite(cluster_test$p_value)) cluster_test$p_value else if (nrow(iid_comparison) >= 2L) iid_comparison$`Pr(>F)`[2L] else NA_real_,
+      iid_p_value = if (nrow(iid_comparison) >= 2L) iid_comparison$`Pr(>F)`[2L] else NA_real_,
+      cluster_p_value = cluster_test$p_value,
       delta_r_squared = summary(block_fit)$adj.r.squared - summary(restricted_fit)$adj.r.squared,
       stringsAsFactors = FALSE
     )
@@ -331,6 +400,12 @@ cdmc_scia_test <- function(
   restricted_fit <- stats::lm(formula = prepared$restricted_formula, data = prepared$sample)
   augmented_fit <- stats::lm(formula = prepared$augmented_formula, data = prepared$sample)
   comparison <- stats::anova(restricted_fit, augmented_fit)
+  cluster_ids <- prepared$sample$.cdmc_unit_index
+  cluster_global_test <- cdmc_cluster_wald_test(
+    augmented_fit,
+    terms = prepared$outcome_history_terms,
+    cluster_ids = cluster_ids
+  )
   resolved_restriction_blocks <- cdmc_resolve_scia_restriction_blocks(
     lags = prepared$lags,
     outcome_history_terms = prepared$outcome_history_terms,
@@ -341,11 +416,14 @@ cdmc_scia_test <- function(
     restricted_fit = restricted_fit,
     restriction_blocks = resolved_restriction_blocks,
     alpha = alpha,
-    p_adjust_method = p_adjust_method
+    p_adjust_method = p_adjust_method,
+    cluster_ids = cluster_ids
   )
 
-  f_statistic <- if (nrow(comparison) >= 2L) comparison$F[2L] else NA_real_
-  p_value <- if (nrow(comparison) >= 2L) comparison$`Pr(>F)`[2L] else NA_real_
+  iid_f <- if (nrow(comparison) >= 2L) comparison$F[2L] else NA_real_
+  iid_p <- if (nrow(comparison) >= 2L) comparison$`Pr(>F)`[2L] else NA_real_
+  f_statistic <- if (is.finite(cluster_global_test$f_statistic)) cluster_global_test$f_statistic else iid_f
+  p_value <- if (is.finite(cluster_global_test$p_value)) cluster_global_test$p_value else iid_p
   delta_r_squared <- summary(augmented_fit)$adj.r.squared - summary(restricted_fit)$adj.r.squared
   global_passed <- is.finite(p_value) && p_value >= alpha
   failed_restrictions <- if (nrow(restriction_table) > 0L) {
@@ -375,6 +453,12 @@ cdmc_scia_test <- function(
     comparison = comparison,
     f_statistic = f_statistic,
     p_value = p_value,
+    iid_f_statistic = iid_f,
+    iid_p_value = iid_p,
+    cluster_f_statistic = cluster_global_test$f_statistic,
+    cluster_p_value = cluster_global_test$p_value,
+    cluster_df1 = cluster_global_test$df1,
+    cluster_df2 = cluster_global_test$df2,
     delta_r_squared = delta_r_squared,
     global_passed = global_passed,
     restriction_table = restriction_table,

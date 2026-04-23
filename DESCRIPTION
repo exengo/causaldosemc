@@ -17,6 +17,7 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Imports:
     softImpute,
+    splines,
     stats
 Suggests:
     CBPS,

@@ -9,3 +9,8 @@
 ^rcmdcheck-.*$
 ^test_output\.(log|txt)$
 ^causaldosemc_[0-9.]+\.tar\.gz$
+^\.claude$
+^\.claude/
+^CLAUDE\.md$
+^TEMP$
+^TEMP/

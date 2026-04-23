@@ -1378,6 +1378,7 @@ test_that("bootstrap preserves rerun_tuning for placebo refit diagnostics", {
     time = "time",
     covariates = "x1",
     lambda = NULL,
+    lambda_selection = "heuristic",
     rank_max = 3,
     washout = 1,
     lag_order = 1,

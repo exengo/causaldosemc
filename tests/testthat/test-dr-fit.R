@@ -413,7 +413,7 @@ test_that("cross-fitted DR estimator can estimate internal CBPS weights", {
   expect_true(any(fit$data$.cdmc_dr_sample))
   expect_true(all(vapply(
     fit$baseline$fold_summaries,
-    function(summary) !is.null(summary$cbps_train_method) && !is.null(summary$cbps_holdout_method),
+    function(summary) !is.null(summary$cbps_train_method) && !is.null(summary$weight_transport_model),
     logical(1)
   )))
 })
@@ -673,6 +673,7 @@ test_that("cross-fitted DR print reports fold lambda tuning guidance", {
     weight_method = "gaussian_gps",
     n_folds = 2,
     lambda = NULL,
+    lambda_selection = "heuristic",
     rank_max = 2,
     washout = 0,
     lag_order = 0,
@@ -1228,4 +1229,142 @@ test_that("cross-fitted DR estimator supports unbalanced panels", {
   expect_true(any(fit$data$.cdmc_dr_sample))
   expect_true(all(is.na(fit$data$.cdmc_tau_dr_linear[!fit$data$.cdmc_observed])))
   expect_true(all(fit$data$.cdmc_weight[!fit$data$.cdmc_observed] == 0))
+})
+test_that("PLR (Robinson) score returns linear lag coefficients", {
+  panel <- simulate_cdmc_data(
+    n_units = 25,
+    n_times = 12,
+    rank = 2,
+    beta = 1,
+    lag_beta = 0.3,
+    n_covariates = 1,
+    noise_sd = 0.03,
+    switch_on_prob = 0.15,
+    switch_off_prob = 0.4,
+    seed = 2222
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 1,
+    dr_score = "plr",
+    seed = 2222
+  )
+
+  expect_s3_class(fit, "cdmc_dr_fit")
+  expect_identical(fit$dr_score, "plr")
+  expect_true(all(c("dose_lag0", "dose_lag1") %in% names(fit$effect$coefficients)))
+  expect_equal(unname(fit$effect$coefficients["dose_lag0"]), 1, tolerance = 0.8)
+})
+
+test_that("baseline_weighting='none' fits without GPS-weighted baseline", {
+  panel <- simulate_cdmc_data(
+    n_units = 20,
+    n_times = 10,
+    rank = 2,
+    beta = 1,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.05,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 3333
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 1,
+    baseline_weighting = "none",
+    seed = 3333
+  )
+
+  expect_s3_class(fit, "cdmc_dr_fit")
+  expect_identical(fit$baseline_weighting, "none")
+  expect_true("dose_lag0" %in% names(fit$effect$coefficients))
+})
+
+test_that("summary.cdmc_dr_fit returns a structured table", {
+  panel <- simulate_cdmc_data(
+    n_units = 20,
+    n_times = 10,
+    rank = 2,
+    beta = 1,
+    lag_beta = 0.2,
+    n_covariates = 1,
+    noise_sd = 0.05,
+    switch_on_prob = 0.2,
+    switch_off_prob = 0.4,
+    seed = 4444
+  )
+
+  fit <- cdmc_dr_fit(
+    data = panel,
+    outcome = "y",
+    dose = "dose",
+    unit = "unit",
+    time = "time",
+    covariates = "x1",
+    n_folds = 2,
+    lambda = 0.2,
+    rank_max = 3,
+    washout = 0,
+    lag_order = 1,
+    seed = 4444
+  )
+
+  s <- summary(fit)
+  expect_s3_class(s, "summary.cdmc_dr_fit")
+  expect_true(all(c("coefficients", "folds", "weight", "score", "dimensions") %in% names(s)))
+  expect_true(nrow(s$coefficients) >= 1L)
+  expect_identical(s$score$dr_score, "aipw")
+  expect_silent(invisible(capture.output(print(s))))
+})
+
+test_that("cdmc_dr_score_contrast aligns AIPW and PLR coefficients", {
+  panel <- simulate_cdmc_data(
+    n_units = 25,
+    n_times = 12,
+    rank = 2,
+    beta = 1,
+    lag_beta = 0.3,
+    n_covariates = 1,
+    noise_sd = 0.03,
+    switch_on_prob = 0.15,
+    switch_off_prob = 0.4,
+    seed = 5555
+  )
+  common <- list(
+    data = panel, outcome = "y", dose = "dose", unit = "unit", time = "time",
+    covariates = "x1", n_folds = 2, lambda = 0.2, rank_max = 3,
+    washout = 0, lag_order = 1, seed = 5555
+  )
+  fit_aipw <- do.call(cdmc_dr_fit, c(common, list(dr_score = "aipw")))
+  fit_plr  <- do.call(cdmc_dr_fit, c(common, list(dr_score = "plr")))
+
+  contrast <- cdmc_dr_score_contrast(fit_aipw, fit_plr)
+  expect_s3_class(contrast, "data.frame")
+  expect_true(all(c("term", "aipw_estimate", "plr_estimate", "abs_diff",
+                    "rel_diff", "sign_agree") %in% names(contrast)))
+  expect_true("dose_lag0" %in% contrast$term)
+  expect_equal(contrast$abs_diff, contrast$plr_estimate - contrast$aipw_estimate)
+
+  expect_error(cdmc_dr_score_contrast(fit_aipw, "not a fit"))
 })

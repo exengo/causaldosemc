@@ -589,7 +589,9 @@ cdmc_entropy_balance_weight_map <- function(constraint_matrix, base_weights, the
   eta <- as.vector(constraint_matrix %*% theta)
   max_eta <- max(eta)
   weighted_exp <- base_weights * exp(eta - max_eta)
-  sum(base_weights) * weighted_exp / sum(weighted_exp)
+  # Equivalent to sum(base_weights) * weighted_exp / sum(weighted_exp); use a
+  # scalar pre-scaling factor to avoid an extra n-vector temporary.
+  weighted_exp * (sum(base_weights) / sum(weighted_exp))
 }
 
 cdmc_fit_entropy_balance_solver <- function(constraint_matrix, base_weights, iterations, reltol) {
@@ -613,9 +615,15 @@ cdmc_fit_entropy_balance_solver <- function(constraint_matrix, base_weights, ite
   gradient_hessian <- function(theta) {
     weights <- cdmc_entropy_balance_weight_map(constraint_matrix, base_weights, theta)
     total_weight <- sum(weights)
-    gradient <- colSums(constraint_matrix * weights) / total_weight
-    centered_constraints <- sweep(constraint_matrix, 2, gradient, FUN = "-")
-    hessian <- crossprod(centered_constraints * sqrt(weights / total_weight), centered_constraints * sqrt(weights / total_weight))
+    # Hot path: original code allocated four n x p temporaries (a sweep
+    # and two copies of `centered * sqrt(w/W)`). Use the FWL identity
+    #   H = C' diag(w/W) C - g g'
+    # which collapses to one n x p allocation (`weighted_C`) plus a single
+    # p x p crossprod and outer product.
+    weighted_C <- constraint_matrix * weights
+    gradient <- colSums(weighted_C) / total_weight
+    hessian <- crossprod(constraint_matrix, weighted_C) / total_weight -
+      tcrossprod(gradient)
 
     list(
       weights = weights,

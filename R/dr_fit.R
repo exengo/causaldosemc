@@ -423,452 +423,6 @@ cdmc_build_dr_weight_diagnostics <- function(fitted_panel, by_fold, weight_metho
   )
 }
 
-cdmc_resolve_gps_spline_covariates <- function(covariates, gps_spline_covariates) {
-  if (is.null(gps_spline_covariates)) {
-    return(character(0))
-  }
-
-  if (!is.character(gps_spline_covariates)) {
-    stop("gps_spline_covariates must be NULL or a character vector of column names.", call. = FALSE)
-  }
-
-  missing_covariates <- setdiff(gps_spline_covariates, covariates %||% character(0))
-  if (length(missing_covariates) > 0L) {
-    stop(
-      sprintf("gps_spline_covariates must be a subset of weight_covariates. Unknown names: %s.", paste(missing_covariates, collapse = ", ")),
-      call. = FALSE
-    )
-  }
-
-  gps_spline_covariates
-}
-
-cdmc_is_gps_spline_candidate <- function(x, gps_df) {
-  if (!is.numeric(x)) {
-    return(FALSE)
-  }
-
-  length(unique(stats::na.omit(x))) > gps_df
-}
-
-cdmc_build_gam_gps_formula <- function(
-  data,
-  dose,
-  covariates,
-  time,
-  gps_time_effects,
-  gps_df = 4L,
-  gps_spline_covariates = covariates
-) {
-  cdmc_assert_installed("mgcv")
-
-  smooth_covariates <- cdmc_resolve_gps_spline_covariates(covariates, gps_spline_covariates)
-  termlabels <- vapply(covariates %||% character(0), function(covariate) {
-    if (covariate %in% smooth_covariates &&
-        cdmc_is_gps_spline_candidate(data[[covariate]], gps_df = gps_df)) {
-      sprintf("s(%s, k = %d)", covariate, gps_df)
-    } else {
-      covariate
-    }
-  }, character(1))
-
-  if (isTRUE(gps_time_effects)) {
-    termlabels <- c(termlabels, sprintf("factor(%s)", time))
-  }
-
-  formula_text <- sprintf(
-    "%s ~ %s",
-    dose,
-    if (length(termlabels) == 0L) "1" else paste(termlabels, collapse = " + ")
-  )
-  formula_environment <- new.env(parent = baseenv())
-  formula_environment$s <- mgcv::s
-  stats::as.formula(formula_text, env = formula_environment)
-}
-
-cdmc_build_gps_formula <- function(
-  data,
-  dose,
-  covariates,
-  time,
-  gps_time_effects,
-  gps_model = c("linear", "spline", "gam", "tree", "forest", "boost"),
-  gps_df = 4L,
-  gps_spline_covariates = covariates
-) {
-  gps_model <- match.arg(gps_model)
-  if (identical(gps_model, "gam")) {
-    return(cdmc_build_gam_gps_formula(
-      data = data,
-      dose = dose,
-      covariates = covariates,
-      time = time,
-      gps_time_effects = gps_time_effects,
-      gps_df = gps_df,
-      gps_spline_covariates = gps_spline_covariates
-    ))
-  }
-
-  spline_covariates <- if (identical(gps_model, "spline")) {
-    cdmc_resolve_gps_spline_covariates(covariates, gps_spline_covariates)
-  } else {
-    character(0)
-  }
-
-  termlabels <- vapply(covariates %||% character(0), function(covariate) {
-    if (identical(gps_model, "spline") &&
-        covariate %in% spline_covariates &&
-        cdmc_is_gps_spline_candidate(data[[covariate]], gps_df = gps_df)) {
-      sprintf("splines::ns(%s, df = %d)", covariate, gps_df)
-    } else {
-      covariate
-    }
-  }, character(1))
-
-  if (isTRUE(gps_time_effects)) {
-    termlabels <- c(termlabels, sprintf("factor(%s)", time))
-  }
-
-  stats::reformulate(termlabels = termlabels, response = dose)
-}
-
-cdmc_build_gps_forest_frame <- function(
-  data,
-  dose,
-  covariates,
-  time,
-  gps_time_effects
-) {
-  predictor_names <- covariates %||% character(0)
-  forest_data <- data.frame(.cdmc_gps_dose = data[[dose]], check.names = FALSE)
-
-  for (covariate in predictor_names) {
-    forest_data[[covariate]] <- data[[covariate]]
-  }
-
-  if (isTRUE(gps_time_effects)) {
-    forest_data$.cdmc_gps_time_factor <- factor(data[[time]])
-    predictor_names <- c(predictor_names, ".cdmc_gps_time_factor")
-  }
-
-  list(
-    data = forest_data,
-    predictor_names = predictor_names,
-    formula = stats::reformulate(termlabels = predictor_names, response = ".cdmc_gps_dose")
-  )
-}
-
-cdmc_available_gps_stack_models <- function() {
-  models <- c("linear", "spline")
-
-  if (requireNamespace("mgcv", quietly = TRUE)) {
-    models <- c(models, "gam")
-  }
-  if (requireNamespace("rpart", quietly = TRUE)) {
-    models <- c(models, "tree")
-  }
-  if (requireNamespace("ranger", quietly = TRUE)) {
-    models <- c(models, "forest")
-  }
-  if (requireNamespace("gbm", quietly = TRUE)) {
-    models <- c(models, "boost")
-  }
-
-  models
-}
-
-cdmc_resolve_gps_stack_models <- function(gps_stack_models = NULL) {
-  allowed_models <- c("linear", "spline", "gam", "tree", "forest", "boost")
-
-  if (is.null(gps_stack_models)) {
-    return(cdmc_available_gps_stack_models())
-  }
-
-  if (!is.character(gps_stack_models) || length(gps_stack_models) < 1L) {
-    stop("gps_stack_models must be NULL or a nonempty character vector of base learner names.", call. = FALSE)
-  }
-
-  gps_stack_models <- unique(gps_stack_models)
-  unknown_models <- setdiff(gps_stack_models, allowed_models)
-  if (length(unknown_models) > 0L) {
-    stop(
-      sprintf("Unknown gps_stack_models entries: %s.", paste(unknown_models, collapse = ", ")),
-      call. = FALSE
-    )
-  }
-
-  if ("gam" %in% gps_stack_models) {
-    cdmc_assert_installed("mgcv")
-  }
-  if ("tree" %in% gps_stack_models) {
-    cdmc_assert_installed("rpart")
-  }
-  if ("forest" %in% gps_stack_models) {
-    cdmc_assert_installed("ranger")
-  }
-  if ("boost" %in% gps_stack_models) {
-    cdmc_assert_installed("gbm")
-  }
-
-  gps_stack_models
-}
-
-cdmc_fit_gps_stack_weights <- function(prediction_matrix, response) {
-  prediction_matrix <- as.matrix(prediction_matrix)
-  if (ncol(prediction_matrix) == 1L) {
-    weights <- 1
-    names(weights) <- colnames(prediction_matrix)
-    return(weights)
-  }
-
-  fit <- stats::lm.fit(x = prediction_matrix, y = response)
-  weights <- as.numeric(fit$coefficients)
-  weights[!is.finite(weights)] <- 0
-  weights <- pmax(weights, 0)
-
-  if (sum(weights) <= sqrt(.Machine$double.eps)) {
-    weights <- rep(1 / ncol(prediction_matrix), ncol(prediction_matrix))
-  } else {
-    weights <- weights / sum(weights)
-  }
-
-  names(weights) <- colnames(prediction_matrix)
-  weights
-}
-
-cdmc_build_stack_gps_formula <- function(dose, stack_models) {
-  stats::as.formula(
-    sprintf("%s ~ %s", dose, paste(paste0("stack_", stack_models), collapse = " + "))
-  )
-}
-
-cdmc_predict_gps_mean_model <- function(object, newdata) {
-  if (inherits(object, "cdmc_gps_constant_mean")) {
-    return(rep(object$mean, nrow(newdata)))
-  }
-  if (inherits(object, "cdmc_gps_stack_mean")) {
-    prediction_matrix <- do.call(
-      cbind,
-      lapply(object$components, function(component) {
-        cdmc_predict_gps_mean_model(
-          component$fit,
-          newdata = component$prepare_newdata(newdata)
-        )
-      })
-    )
-    prediction_matrix <- as.matrix(prediction_matrix)
-    colnames(prediction_matrix) <- object$model_names
-    return(as.numeric(prediction_matrix %*% object$weights))
-  }
-  if (inherits(object, "gbm")) {
-    return(as.numeric(stats::predict(object, newdata = newdata, n.trees = object$n.trees, type = "response")))
-  }
-  if (inherits(object, "ranger")) {
-    return(as.numeric(stats::predict(object, data = newdata)$predictions))
-  }
-
-  as.numeric(stats::predict(object, newdata = newdata))
-}
-
-cdmc_fit_gps_mean_model <- function(
-  data,
-  dose,
-  covariates,
-  time,
-  gps_time_effects = TRUE,
-  gps_model = c("linear", "spline", "gam", "tree", "forest", "stack", "boost"),
-  gps_df = 4L,
-  gps_spline_covariates = covariates,
-  gps_stack_models = NULL,
-  gps_forest_trees = 200L,
-  gps_forest_mtry = NULL,
-  gps_forest_min_node_size = NULL,
-  gps_boost_trees = 200L,
-  gps_boost_depth = 2L,
-  gps_boost_shrinkage = 0.05,
-  gps_boost_min_obs_node = 10L
-) {
-  gps_model <- match.arg(gps_model)
-  if (identical(gps_model, "stack")) {
-    stack_models <- cdmc_resolve_gps_stack_models(gps_stack_models)
-    component_models <- lapply(stack_models, function(stack_model) {
-      cdmc_fit_gps_mean_model(
-        data = data,
-        dose = dose,
-        covariates = covariates,
-        time = time,
-        gps_time_effects = gps_time_effects,
-        gps_model = stack_model,
-        gps_df = gps_df,
-        gps_spline_covariates = gps_spline_covariates,
-        gps_stack_models = NULL,
-        gps_forest_trees = gps_forest_trees,
-        gps_forest_mtry = gps_forest_mtry,
-        gps_forest_min_node_size = gps_forest_min_node_size,
-        gps_boost_trees = gps_boost_trees,
-        gps_boost_depth = gps_boost_depth,
-        gps_boost_shrinkage = gps_boost_shrinkage,
-        gps_boost_min_obs_node = gps_boost_min_obs_node
-      )
-    })
-
-    prediction_matrix <- do.call(
-      cbind,
-      lapply(component_models, function(component_model) {
-        cdmc_predict_gps_mean_model(
-          component_model$fit,
-          newdata = component_model$prepare_newdata(data)
-        )
-      })
-    )
-    prediction_matrix <- as.matrix(prediction_matrix)
-    colnames(prediction_matrix) <- stack_models
-    fit_object <- structure(
-      list(
-        model_names = stack_models,
-        weights = cdmc_fit_gps_stack_weights(prediction_matrix, response = data[[dose]]),
-        components = lapply(component_models, function(component_model) {
-          list(
-            fit = component_model$fit,
-            prepare_newdata = component_model$prepare_newdata
-          )
-        })
-      ),
-      class = "cdmc_gps_stack_mean"
-    )
-
-    return(list(
-      formula = cdmc_build_stack_gps_formula(dose, stack_models),
-      fit = fit_object,
-      prepare_newdata = function(newdata) newdata,
-      gps_stack_models = stack_models
-    ))
-  }
-
-  if (identical(gps_model, "boost")) {
-    cdmc_assert_installed("gbm")
-    boost_frame <- cdmc_build_gps_forest_frame(
-      data = data,
-      dose = dose,
-      covariates = covariates,
-      time = time,
-      gps_time_effects = gps_time_effects
-    )
-
-    if (length(boost_frame$predictor_names) == 0L) {
-      fit_object <- structure(list(mean = mean(data[[dose]], na.rm = TRUE)), class = "cdmc_gps_constant_mean")
-    } else {
-      fit_object <- gbm::gbm(
-        formula = boost_frame$formula,
-        data = boost_frame$data,
-        distribution = "gaussian",
-        n.trees = gps_boost_trees,
-        interaction.depth = gps_boost_depth,
-        shrinkage = gps_boost_shrinkage,
-        n.minobsinnode = gps_boost_min_obs_node,
-        bag.fraction = 1,
-        train.fraction = 1,
-        keep.data = FALSE,
-        verbose = FALSE,
-        n.cores = 1L
-      )
-    }
-
-    return(list(
-      formula = boost_frame$formula,
-      fit = fit_object,
-      prepare_newdata = function(newdata) {
-        boost_newdata <- cdmc_build_gps_forest_frame(
-          data = newdata,
-          dose = dose,
-          covariates = covariates,
-          time = time,
-          gps_time_effects = gps_time_effects
-        )$data
-        boost_newdata[, boost_frame$predictor_names, drop = FALSE]
-      },
-      gps_stack_models = NULL
-    ))
-  }
-
-  if (identical(gps_model, "forest")) {
-    cdmc_assert_installed("ranger")
-    forest_frame <- cdmc_build_gps_forest_frame(
-      data = data,
-      dose = dose,
-      covariates = covariates,
-      time = time,
-      gps_time_effects = gps_time_effects
-    )
-
-    if (length(forest_frame$predictor_names) == 0L) {
-      fit_object <- structure(list(mean = mean(data[[dose]], na.rm = TRUE)), class = "cdmc_gps_constant_mean")
-    } else {
-      fit_object <- ranger::ranger(
-        dependent.variable.name = ".cdmc_gps_dose",
-        data = forest_frame$data,
-        num.trees = gps_forest_trees,
-        mtry = gps_forest_mtry,
-        min.node.size = gps_forest_min_node_size,
-        respect.unordered.factors = "order",
-        seed = 1L,
-        num.threads = 1L
-      )
-    }
-
-    return(list(
-      formula = forest_frame$formula,
-      fit = fit_object,
-      prepare_newdata = function(newdata) {
-        forest_newdata <- cdmc_build_gps_forest_frame(
-          data = newdata,
-          dose = dose,
-          covariates = covariates,
-          time = time,
-          gps_time_effects = gps_time_effects
-        )$data
-        forest_newdata[, forest_frame$predictor_names, drop = FALSE]
-      },
-      gps_stack_models = NULL
-    ))
-  }
-
-  formula <- cdmc_build_gps_formula(
-    data = data,
-    dose = dose,
-    covariates = covariates,
-    time = time,
-    gps_time_effects = gps_time_effects,
-    gps_model = gps_model,
-    gps_df = gps_df,
-    gps_spline_covariates = gps_spline_covariates
-  )
-
-  fit_object <- if (identical(gps_model, "gam")) {
-    mgcv::gam(
-      formula = formula,
-      data = data,
-      method = "REML"
-    )
-  } else if (identical(gps_model, "tree")) {
-    cdmc_assert_installed("rpart")
-    rpart::rpart(
-      formula = formula,
-      data = data,
-      method = "anova"
-    )
-  } else {
-    stats::lm(formula = formula, data = data)
-  }
-
-  list(
-    formula = formula,
-    fit = fit_object,
-    prepare_newdata = function(newdata) newdata,
-    gps_stack_models = NULL
-  )
-}
-
 cdmc_fit_kernel_density <- function(x, bandwidth = NULL, n = 512L) {
   x <- stats::na.omit(as.numeric(x))
   if (length(x) == 0L) {
@@ -895,21 +449,55 @@ cdmc_fit_kernel_density <- function(x, bandwidth = NULL, n = 512L) {
   list(
     bandwidth = resolved_bandwidth,
     x = density_fit$x,
-    y = density_fit$y
+    y = density_fit$y,
+    support_min = min(density_fit$x),
+    support_max = max(density_fit$x)
   )
 }
 
+# Evaluate the KDE at `values`, falling back to a Gaussian-tail extrapolation
+# anchored at the boundary density when `values` lies outside the support
+# captured by the training KDE grid. Returns the predicted density and a
+# logical vector flagging out-of-support evaluations so callers can surface
+# diagnostics about positivity violations in cross-fit folds.
 cdmc_predict_kernel_density <- function(object, values) {
+  values <- as.numeric(values)
   approximated <- stats::approx(
     x = object$x,
     y = object$y,
     xout = values,
-    yleft = 0,
-    yright = 0,
+    yleft = NA_real_,
+    yright = NA_real_,
     rule = 1L
   )$y
 
-  pmax(as.numeric(approximated), .Machine$double.xmin)
+  out_of_support <- is.na(approximated) & is.finite(values)
+  if (any(out_of_support)) {
+    bandwidth <- object$bandwidth
+    if (!is.finite(bandwidth) || bandwidth <= sqrt(.Machine$double.eps)) {
+      bandwidth <- sqrt(.Machine$double.eps)
+    }
+    boundary_y_left <- object$y[1L]
+    boundary_y_right <- object$y[length(object$y)]
+    support_min <- object$support_min %||% min(object$x)
+    support_max <- object$support_max %||% max(object$x)
+
+    left_idx <- out_of_support & values < support_min
+    right_idx <- out_of_support & values > support_max
+
+    if (any(left_idx)) {
+      delta <- (support_min - values[left_idx]) / bandwidth
+      approximated[left_idx] <- boundary_y_left * exp(-0.5 * delta * delta)
+    }
+    if (any(right_idx)) {
+      delta <- (values[right_idx] - support_max) / bandwidth
+      approximated[right_idx] <- boundary_y_right * exp(-0.5 * delta * delta)
+    }
+  }
+
+  density_values <- pmax(as.numeric(approximated), .Machine$double.xmin)
+  attr(density_values, "out_of_support") <- out_of_support
+  density_values
 }
 
 cdmc_fit_gaussian_gps <- function(
@@ -1126,8 +714,16 @@ cdmc_predict_kernel_gps_weights <- function(
     rep(1, nrow(newdata))
   }
 
-  weights <- numerator / pmax(conditional_density, .Machine$double.xmin)
-  cdmc_cap_internal_weights(weights, max_weight = max_weight)
+  weights <- as.numeric(numerator) / pmax(as.numeric(conditional_density), .Machine$double.xmin)
+
+  cond_oos <- attr(conditional_density, "out_of_support")
+  marg_oos <- attr(numerator, "out_of_support")
+  out_of_support_flags <- (if (is.null(cond_oos)) FALSE else cond_oos) |
+    (if (is.null(marg_oos)) FALSE else marg_oos)
+
+  capped <- cdmc_cap_internal_weights(weights, max_weight = max_weight)
+  attr(capped, "out_of_support") <- out_of_support_flags
+  capped
 }
 
 cdmc_fit_cbps_weights <- function(
@@ -1234,6 +830,116 @@ cdmc_fit_internal_gps <- function(
   )
 }
 
+# Generic cross-fit transport for balancing weights.
+#
+# Balancing solvers (CBPS, entropy_balance, kernel_balance, adaptive_balance)
+# do not expose a closed-form predict step that maps a learned tilt to new
+# observations: their constraint design is centered on the training sample and
+# their parameters are not directly identified out-of-sample. To preserve the
+# Chernozhukov-style cross-fitting property we therefore fit a *weight
+# regression* on the training fold -- regressing log(train weights) onto the
+# same covariate basis used by the GPS nuisance -- and apply that predictor to
+# the holdout fold. The resulting holdout weights depend on holdout features
+# only through the train-fold model, so the second-stage estimator remains
+# Neyman-orthogonal under standard nuisance-rate conditions.
+#
+# This replaces the previous in-sample re-fit on the holdout fold, which was
+# silently anti-conservative (the holdout score reused information already
+# absorbed into the holdout weights).
+cdmc_fit_balance_weight_transport <- function(
+  train_data,
+  train_weights,
+  dose,
+  weight_covariates,
+  time,
+  gps_time_effects,
+  gps_model,
+  gps_df,
+  gps_spline_covariates
+) {
+  if (length(train_weights) != nrow(train_data)) {
+    stop("train_weights must have one entry per row of train_data.", call. = FALSE)
+  }
+
+  observed_rows <- if (".cdmc_observed" %in% names(train_data)) {
+    !is.na(train_data$.cdmc_observed) & train_data$.cdmc_observed
+  } else {
+    rep(TRUE, nrow(train_data))
+  }
+  fit_data <- train_data[observed_rows, , drop = FALSE]
+  fit_weights <- train_weights[observed_rows]
+
+  positive <- is.finite(fit_weights) & fit_weights > 0
+  if (sum(positive) < 2L) {
+    stop("Cross-fit weight transport requires at least two positive training weights.", call. = FALSE)
+  }
+  fit_data <- fit_data[positive, , drop = FALSE]
+  fit_weights <- fit_weights[positive]
+
+  log_response_column <- ".cdmc_log_train_weight"
+  fit_data[[log_response_column]] <- log(fit_weights)
+
+  # The GPS model family for the transport mirrors the user's chosen GPS
+  # specification, except that we treat dose as an additional covariate so the
+  # transport can capture the weight's dose-dependence (which is exactly the
+  # balancing model's structural mechanism). Tree/forest/boost/stack models
+  # require dose as a feature; spline/linear/gam expand it as a covariate.
+  transport_covariates <- unique(c(weight_covariates %||% character(0), dose))
+  transport_spline_covariates <- intersect(
+    transport_covariates,
+    c(gps_spline_covariates %||% character(0), dose)
+  )
+
+  mean_model <- cdmc_fit_gps_mean_model(
+    data = fit_data,
+    dose = log_response_column,
+    covariates = transport_covariates,
+    time = time,
+    gps_time_effects = gps_time_effects,
+    gps_model = gps_model,
+    gps_df = gps_df,
+    gps_spline_covariates = transport_spline_covariates,
+    gps_stack_models = NULL,
+    gps_forest_trees = 200L,
+    gps_forest_mtry = NULL,
+    gps_forest_min_node_size = NULL,
+    gps_boost_trees = 200L,
+    gps_boost_depth = 2L,
+    gps_boost_shrinkage = 0.05,
+    gps_boost_min_obs_node = 10L
+  )
+
+  # Calibrate so the transported predictor reproduces the training weight scale
+  # exactly: the residual between mean(exp(log_pred)) and mean(train_weights)
+  # is absorbed into a multiplicative constant. This avoids drift in the
+  # AIPW augmentation when the transport is biased on the log scale.
+  fitted_log <- cdmc_predict_gps_mean_model(
+    mean_model$fit,
+    newdata = mean_model$prepare_newdata(fit_data)
+  )
+  fitted_weight <- exp(fitted_log)
+  scale_factor <- mean(fit_weights) / mean(fitted_weight)
+  if (!is.finite(scale_factor) || scale_factor <= 0) {
+    scale_factor <- 1
+  }
+
+  list(
+    mean_model = mean_model,
+    scale_factor = scale_factor,
+    log_response_column = log_response_column
+  )
+}
+
+cdmc_predict_balance_weight_transport <- function(transport, newdata) {
+  log_pred <- cdmc_predict_gps_mean_model(
+    transport$mean_model$fit,
+    newdata = transport$mean_model$prepare_newdata(newdata)
+  )
+  weights <- exp(as.numeric(log_pred)) * transport$scale_factor
+  weights[!is.finite(weights) | weights < 0] <- 0
+  weights
+}
+
 cdmc_predict_internal_gps_weights <- function(
   object,
   newdata,
@@ -1268,85 +974,31 @@ cdmc_predict_internal_gps_weights <- function(
   stop("Internal GPS prediction requires a fitted gaussian_gps or kernel_gps nuisance model.", call. = FALSE)
 }
 
-cdmc_validate_holdout_support <- function(eligible_mask) {
-  if (any(rowSums(eligible_mask) == 0L)) {
-    stop(
-      "Each holdout unit must retain at least one eligible zero-dose observation for cross-fitted baseline prediction.",
-      call. = FALSE
-    )
-  }
-}
-
-cdmc_extract_time_basis <- function(baseline_fit, n_times) {
-  soft_fit <- baseline_fit$soft_fit
-  if (is.null(soft_fit) || is.null(soft_fit$v) || length(soft_fit$d) == 0L) {
-    return(matrix(0, nrow = n_times, ncol = 0L))
-  }
-
-  sweep(soft_fit$v, 2, soft_fit$d, FUN = "*")
-}
-
-cdmc_predict_holdout_baseline <- function(object, prepared, eligible_mask, weight_matrix = NULL) {
-  if (!inherits(object, "cdmc_fit")) {
-    stop("object must inherit from 'cdmc_fit'.", call. = FALSE)
-  }
-
-  cdmc_validate_holdout_support(eligible_mask)
-
-  n_units <- prepared$n_units
-  n_times <- prepared$n_times
-  nuisance_fit <- object$baseline$nuisance
-  basis <- cdmc_extract_time_basis(object$baseline, n_times = n_times)
-  x_beta <- cdmc_covariate_contribution(
-    x_matrices = prepared$x_matrices,
-    gamma = nuisance_fit$gamma,
-    n_units = n_units,
-    n_times = n_times
-  )
-
-  baseline_hat <- matrix(0, nrow = n_units, ncol = n_times)
-  low_rank_hat <- matrix(0, nrow = n_units, ncol = n_times)
-  alpha_hat <- numeric(n_units)
-
-  for (unit_index in seq_len(n_units)) {
-    row_mask <- eligible_mask[unit_index, ]
-    response <- prepared$y_matrix[unit_index, row_mask] - nuisance_fit$beta[row_mask] - x_beta[unit_index, row_mask]
-    design <- cbind(1, basis[row_mask, , drop = FALSE])
-    row_weights <- if (is.null(weight_matrix)) NULL else weight_matrix[unit_index, row_mask]
-
-    regression_fit <- if (is.null(row_weights)) {
-      stats::lm.fit(x = design, y = response)
-    } else {
-      stats::lm.wfit(x = design, y = response, w = row_weights)
-    }
-
-    coefficients <- regression_fit$coefficients
-    coefficients[is.na(coefficients)] <- 0
-    alpha_hat[unit_index] <- coefficients[[1L]]
-
-    if (length(coefficients) > 1L) {
-      low_rank_hat[unit_index, ] <- as.vector(basis %*% coefficients[-1L])
-    }
-  }
-
-  baseline_hat <- matrix(alpha_hat, nrow = n_units, ncol = n_times) +
-    matrix(nuisance_fit$beta, nrow = n_units, ncol = n_times, byrow = TRUE) +
-    x_beta +
-    low_rank_hat
-
-  list(
-    baseline_hat = baseline_hat,
-    alpha = alpha_hat,
-    low_rank = low_rank_hat,
-    time_basis = basis
-  )
-}
-
-cdmc_prepare_dr_fold_sample <- function(object, prepared, baseline_hat, weight_matrix = NULL, fold_id = NA_integer_) {
+cdmc_prepare_dr_fold_sample <- function(object, prepared, baseline_hat, weight_matrix = NULL, fold_id = NA_integer_,
+                                        dr_score = c("aipw", "plr"), dose_residual_matrix = NULL) {
+  dr_score <- match.arg(dr_score)
   tau_matrix <- prepared$y_matrix - baseline_hat
-  lag_array <- cdmc_build_lagged_doses(prepared$dose_matrix, lag_order = object$lag_order)
+  # In PLR mode, the lag design is built from residualized doses
+  # D_t - E[D_t | X_t]. The orthogonal score reduces to OLS of the outcome
+  # residual on residualized lags (no augmentation; weights are not needed
+  # for orthogonality, only for efficiency, so we drop them here).
+  if (identical(dr_score, "plr")) {
+    if (is.null(dose_residual_matrix)) {
+      stop("dose_residual_matrix must be supplied when dr_score = 'plr'.", call. = FALSE)
+    }
+    lag_array <- cdmc_build_lagged_doses(dose_residual_matrix, lag_order = object$lag_order)
+  } else {
+    lag_array <- cdmc_build_lagged_doses(prepared$dose_matrix, lag_order = object$lag_order)
+  }
   valid_history <- apply(!is.na(lag_array), c(1, 2), all)
-  exposure_magnitude <- cdmc_lag_exposure_magnitude(lag_array)
+  # PLR exposure magnitude is computed on the *original* doses so the
+  # zero-dose support condition is unchanged across the two scores.
+  exposure_lag_array <- if (identical(dr_score, "plr")) {
+    cdmc_build_lagged_doses(prepared$dose_matrix, lag_order = object$lag_order)
+  } else {
+    lag_array
+  }
+  exposure_magnitude <- cdmc_lag_exposure_magnitude(exposure_lag_array)
 
   sample_mask <- valid_history & !is.na(tau_matrix) & exposure_magnitude > 0
   if (!is.null(weight_matrix)) {
@@ -1381,7 +1033,15 @@ cdmc_prepare_dr_fold_sample <- function(object, prepared, baseline_hat, weight_m
   tau_observed <- tau_matrix[sample_indices]
   tau_model <- as.vector(design %*% coefficient_vector)
   sample_weights <- if (is.null(weight_matrix)) rep(1, length(tau_observed)) else weight_matrix[sample_indices]
-  pseudo_tau <- tau_model + sample_weights * (tau_observed - tau_model)
+  if (identical(dr_score, "plr")) {
+    # Robinson PLR pseudo-outcome: y_resid = Y - m(X) only. Orthogonality
+    # is achieved by using residualized lags in `design`. Per-cell weights
+    # default to 1 so the downstream OLS is canonical FWL; users can still
+    # supply weights for efficiency, in which case we honour them.
+    pseudo_tau <- tau_observed
+  } else {
+    pseudo_tau <- tau_model + sample_weights * (tau_observed - tau_model)
+  }
 
   linear_indices <- (sample_indices[, 1L] - 1L) * prepared$n_times + sample_indices[, 2L]
   sample_table <- prepared$data[linear_indices, c(names(prepared$data)), drop = FALSE]
@@ -1444,13 +1104,15 @@ cdmc_dr_fit <- function(
   kernel_balance_reltol = 1e-8,
   stabilize_weights = TRUE,
   max_weight = "adaptive",
+  baseline_weighting = c("gps", "none"),
+  dr_score = c("aipw", "plr"),
   n_folds = 2L,
   dr_workers = 1L,
   fold_assignments = NULL,
   lambda = NULL,
   rank_max = NULL,
   lambda_fraction = 0.25,
-  lambda_selection = c("heuristic", "cv"),
+  lambda_selection = c("cv", "heuristic"),
   lambda_grid = NULL,
   nlambda = 5L,
   lambda_min_ratio = 0.05,
@@ -1476,6 +1138,8 @@ cdmc_dr_fit <- function(
   lambda_selection <- match.arg(lambda_selection)
   gps_model <- match.arg(gps_model)
   cbps_method <- match.arg(cbps_method)
+  baseline_weighting <- match.arg(baseline_weighting)
+  dr_score <- match.arg(dr_score)
   weight_method <- cdmc_resolve_dr_weight_method(weights = weights, weight_method = weight_method)
   max_weight <- if (identical(weight_method, "external")) {
     NULL
@@ -1686,6 +1350,7 @@ cdmc_dr_fit <- function(
 
     gps_fit <- NULL
     holdout_gps_fit <- NULL
+    weight_transport <- NULL
     adaptive_balance_weights <- get("cdmc_adaptive_balance_weights", mode = "function")
     entropy_balance_weights <- get("cdmc_entropy_balance_weights", mode = "function")
     kernel_balance_weights <- get("cdmc_kernel_balance_weights", mode = "function")
@@ -1705,23 +1370,22 @@ cdmc_dr_fit <- function(
         cbps_twostep = cbps_twostep,
         max_weight = max_weight
       )
-      holdout_gps_fit <- cdmc_fit_cbps_weights(
-        data = holdout_data,
+      train_data$.cdmc_dr_weight_raw <- gps_fit$weights
+      weight_transport <- cdmc_fit_balance_weight_transport(
+        train_data = train_data,
+        train_weights = gps_fit$weights,
         dose = dose,
-        covariates = weight_covariates,
+        weight_covariates = weight_covariates,
         time = time,
         gps_time_effects = gps_time_effects,
         gps_model = gps_model,
         gps_df = gps_df,
-        gps_spline_covariates = gps_spline_covariates,
-        cbps_standardize = cbps_standardize,
-        cbps_method = cbps_method,
-        cbps_iterations = cbps_iterations,
-        cbps_twostep = cbps_twostep,
-        max_weight = max_weight
+        gps_spline_covariates = gps_spline_covariates
       )
-      train_data$.cdmc_dr_weight_raw <- gps_fit$weights
-      holdout_data$.cdmc_dr_weight_raw <- holdout_gps_fit$weights
+      holdout_data$.cdmc_dr_weight_raw <- cdmc_cap_internal_weights(
+        cdmc_predict_balance_weight_transport(weight_transport, holdout_data),
+        max_weight = gps_fit$applied_max_weight
+      )
     } else if (identical(weight_method, "entropy_balance")) {
       gps_fit <- entropy_balance_weights(
         data = train_data,
@@ -1738,23 +1402,22 @@ cdmc_dr_fit <- function(
         reltol = entropy_balance_reltol,
         max_weight = max_weight
       )
-      holdout_gps_fit <- entropy_balance_weights(
-        data = holdout_data,
-        dose = dose,
-        covariates = weight_covariates,
-        time = time,
-        time_effects = gps_time_effects,
-        model = gps_model,
-        df = gps_df,
-        spline_covariates = gps_spline_covariates,
-        degree = entropy_balance_degree,
-        standardize = entropy_balance_standardize,
-        iterations = entropy_balance_iterations,
-        reltol = entropy_balance_reltol,
-        max_weight = max_weight
-      )
       train_data$.cdmc_dr_weight_raw <- gps_fit$weights
-      holdout_data$.cdmc_dr_weight_raw <- holdout_gps_fit$weights
+      weight_transport <- cdmc_fit_balance_weight_transport(
+        train_data = train_data,
+        train_weights = gps_fit$weights,
+        dose = dose,
+        weight_covariates = weight_covariates,
+        time = time,
+        gps_time_effects = gps_time_effects,
+        gps_model = gps_model,
+        gps_df = gps_df,
+        gps_spline_covariates = gps_spline_covariates
+      )
+      holdout_data$.cdmc_dr_weight_raw <- cdmc_cap_internal_weights(
+        cdmc_predict_balance_weight_transport(weight_transport, holdout_data),
+        max_weight = gps_fit$applied_max_weight
+      )
     } else if (identical(weight_method, "kernel_balance")) {
       gps_fit <- kernel_balance_weights(
         data = train_data,
@@ -1773,25 +1436,22 @@ cdmc_dr_fit <- function(
         reltol = kernel_balance_reltol,
         max_weight = max_weight
       )
-      holdout_gps_fit <- kernel_balance_weights(
-        data = holdout_data,
-        dose = dose,
-        covariates = weight_covariates,
-        time = time,
-        time_effects = gps_time_effects,
-        model = gps_model,
-        df = gps_df,
-        spline_covariates = gps_spline_covariates,
-        degree = kernel_balance_degree,
-        n_centers = kernel_balance_centers,
-        bandwidth = kernel_balance_bandwidth,
-        standardize = kernel_balance_standardize,
-        iterations = kernel_balance_iterations,
-        reltol = kernel_balance_reltol,
-        max_weight = max_weight
-      )
       train_data$.cdmc_dr_weight_raw <- gps_fit$weights
-      holdout_data$.cdmc_dr_weight_raw <- holdout_gps_fit$weights
+      weight_transport <- cdmc_fit_balance_weight_transport(
+        train_data = train_data,
+        train_weights = gps_fit$weights,
+        dose = dose,
+        weight_covariates = weight_covariates,
+        time = time,
+        gps_time_effects = gps_time_effects,
+        gps_model = gps_model,
+        gps_df = gps_df,
+        gps_spline_covariates = gps_spline_covariates
+      )
+      holdout_data$.cdmc_dr_weight_raw <- cdmc_cap_internal_weights(
+        cdmc_predict_balance_weight_transport(weight_transport, holdout_data),
+        max_weight = gps_fit$applied_max_weight
+      )
     } else if (identical(weight_method, "adaptive_balance")) {
       gps_fit <- adaptive_balance_weights(
         data = train_data,
@@ -1819,34 +1479,22 @@ cdmc_dr_fit <- function(
         kernel_balance_reltol = kernel_balance_reltol,
         max_weight = max_weight
       )
-      holdout_gps_fit <- adaptive_balance_weights(
-        data = holdout_data,
-        dose = dose,
-        covariates = weight_covariates,
-        time = time,
-        time_effects = gps_time_effects,
-        model = gps_model,
-        df = gps_df,
-        spline_covariates = gps_spline_covariates,
-        methods = adaptive_balance_methods,
-        cbps_standardize = cbps_standardize,
-        cbps_method = cbps_method,
-        cbps_iterations = cbps_iterations,
-        cbps_twostep = cbps_twostep,
-        entropy_balance_degree = entropy_balance_degree,
-        entropy_balance_standardize = entropy_balance_standardize,
-        entropy_balance_iterations = entropy_balance_iterations,
-        entropy_balance_reltol = entropy_balance_reltol,
-        kernel_balance_degree = kernel_balance_degree,
-        kernel_balance_centers = kernel_balance_centers,
-        kernel_balance_bandwidth = kernel_balance_bandwidth,
-        kernel_balance_standardize = kernel_balance_standardize,
-        kernel_balance_iterations = kernel_balance_iterations,
-        kernel_balance_reltol = kernel_balance_reltol,
-        max_weight = max_weight
-      )
       train_data$.cdmc_dr_weight_raw <- gps_fit$weights
-      holdout_data$.cdmc_dr_weight_raw <- holdout_gps_fit$weights
+      weight_transport <- cdmc_fit_balance_weight_transport(
+        train_data = train_data,
+        train_weights = gps_fit$weights,
+        dose = dose,
+        weight_covariates = weight_covariates,
+        time = time,
+        gps_time_effects = gps_time_effects,
+        gps_model = gps_model,
+        gps_df = gps_df,
+        gps_spline_covariates = gps_spline_covariates
+      )
+      holdout_data$.cdmc_dr_weight_raw <- cdmc_cap_internal_weights(
+        cdmc_predict_balance_weight_transport(weight_transport, holdout_data),
+        max_weight = gps_fit$applied_max_weight
+      )
     } else if (!identical(weight_method, "external")) {
       gps_fit <- cdmc_fit_internal_gps(
         weight_method = weight_method,
@@ -1884,6 +1532,16 @@ cdmc_dr_fit <- function(
       )
     }
 
+    # Train baseline weighting choice. The standard AIPW orthogonal score is
+    # asymptotically valid with an unweighted outcome regression (the GPS
+    # weights enter only through the augmentation term). Weighting the train
+    # baseline by the same weights tilts the imputed counterfactual toward
+    # the treatment-relevant covariate distribution, which can reduce bias
+    # when the dose-response surface is smoother in that distribution but is
+    # not required for orthogonality. Default "gps" preserves the historical
+    # behaviour; pass `baseline_weighting = "none"` for canonical AIPW.
+    train_weight_arg <- if (identical(baseline_weighting, "none")) NULL else ".cdmc_dr_weight_raw"
+
     fold_fit <- cdmc_fit(
       data = train_data,
       outcome = outcome,
@@ -1891,7 +1549,7 @@ cdmc_dr_fit <- function(
       unit = unit,
       time = time,
       covariates = covariates,
-      weights = ".cdmc_dr_weight_raw",
+      weights = train_weight_arg,
       lambda = lambda,
       rank_max = rank_max,
       lambda_fraction = lambda_fraction,
@@ -1948,8 +1606,12 @@ cdmc_dr_fit <- function(
     holdout_reference_normalized <- NULL
     if (!identical(weight_method, "external")) {
       if (weight_method %in% c("cbps", "entropy_balance", "kernel_balance", "adaptive_balance")) {
+        # Reference: the transported holdout weights (from the train-fold
+        # weight regression). This is the same predictor used to populate
+        # `.cdmc_dr_weight_raw` above; we reattach it on the prepared (padded)
+        # data frame so the diagnostic summary aligns with downstream rows.
         reference_lookup <- stats::setNames(
-          holdout_gps_fit$raw_weights,
+          holdout_data$.cdmc_dr_weight_raw,
           paste(holdout_data$.cdmc_global_unit_index, holdout_data$.cdmc_global_time_index, sep = "\r")
         )
         holdout_reference_raw <- unname(reference_lookup[
@@ -1973,12 +1635,53 @@ cdmc_dr_fit <- function(
       eligible_mask = holdout_eligible_mask,
       weight_matrix = holdout_weight_matrix
     )
+
+    # Robinson PLR: fit a conditional dose mean model E[D | X, t] on the
+    # train fold and predict on the holdout. Residualizing dose lags by
+    # this conditional mean gives the orthogonal Frisch-Waugh score.
+    dose_residual_matrix <- NULL
+    plr_dose_model <- NULL
+    if (identical(dr_score, "plr")) {
+      plr_train <- train_data
+      plr_train[[dose]] <- as.numeric(plr_train[[dose]])
+      plr_dose_model <- cdmc_fit_gps_mean_model(
+        data = plr_train,
+        dose = dose,
+        covariates = weight_covariates,
+        time = time,
+        gps_time_effects = gps_time_effects,
+        gps_model = gps_model,
+        gps_df = gps_df,
+        gps_spline_covariates = gps_spline_covariates,
+        gps_stack_models = gps_stack_models,
+        gps_forest_trees = gps_forest_trees,
+        gps_forest_mtry = gps_forest_mtry,
+        gps_forest_min_node_size = gps_forest_min_node_size,
+        gps_boost_trees = gps_boost_trees,
+        gps_boost_depth = gps_boost_depth,
+        gps_boost_shrinkage = gps_boost_shrinkage,
+        gps_boost_min_obs_node = gps_boost_min_obs_node
+      )
+      holdout_dose_pred_data <- plr_dose_model$prepare_newdata(holdout_prepared$data)
+      holdout_dose_hat <- as.numeric(cdmc_predict_gps_mean_model(plr_dose_model$fit, newdata = holdout_dose_pred_data))
+      dose_residual_vector <- holdout_prepared$data[[dose]] - holdout_dose_hat
+      dose_residual_matrix <- matrix(
+        dose_residual_vector,
+        nrow = holdout_prepared$n_units,
+        ncol = holdout_prepared$n_times,
+        byrow = TRUE
+      )
+      dose_residual_matrix[is.na(holdout_prepared$dose_matrix)] <- NA_real_
+    }
+
     fold_sample <- cdmc_prepare_dr_fold_sample(
       object = fold_fit,
       prepared = holdout_prepared,
       baseline_hat = holdout_baseline$baseline_hat,
       weight_matrix = holdout_weight_matrix,
-      fold_id = fold_index
+      fold_id = fold_index,
+      dr_score = dr_score,
+      dose_residual_matrix = dose_residual_matrix
     )
 
     global_indices <- cbind(
@@ -2053,7 +1756,11 @@ cdmc_dr_fit <- function(
       gps_sigma_cond = if (is.null(gps_fit)) NULL else gps_fit$sigma_cond %||% NULL,
       cbps_requested_method = if (is.null(gps_fit) || !identical(weight_method, "cbps")) NULL else gps_fit$requested_method,
       cbps_train_method = if (is.null(gps_fit) || !identical(weight_method, "cbps")) NULL else gps_fit$method,
-      cbps_holdout_method = if (is.null(holdout_gps_fit) || !identical(weight_method, "cbps")) NULL else holdout_gps_fit$method,
+      cbps_holdout_method = NULL,
+      weight_transport_model = if (is.null(weight_transport)) NULL else gps_model,
+      weight_transport_scale_factor = if (is.null(weight_transport)) NULL else weight_transport$scale_factor,
+      baseline_weighting = baseline_weighting,
+      dr_score = dr_score,
       cbps_standardize = if (identical(weight_method, "cbps")) cbps_standardize else NULL,
       cbps_iterations = if (identical(weight_method, "cbps")) cbps_iterations else NULL,
       cbps_twostep = if (identical(weight_method, "cbps")) cbps_twostep else NULL,
@@ -2220,6 +1927,8 @@ cdmc_dr_fit <- function(
     kernel_balance_reltol = kernel_balance_reltol,
     stabilize_weights = stabilize_weights,
     max_weight = max_weight,
+    baseline_weighting = baseline_weighting,
+    dr_score = dr_score,
     rank_max = rank_max,
     washout = as.integer(washout),
     lag_order = as.integer(lag_order),
@@ -2260,6 +1969,8 @@ cdmc_dr_fit <- function(
       kernel_balance_reltol = kernel_balance_reltol,
       stabilize_weights = stabilize_weights,
       max_weight = max_weight,
+      baseline_weighting = baseline_weighting,
+      dr_score = dr_score,
       n_folds = n_folds,
       dr_workers = fold_worker_count,
       lambda = lambda,
@@ -2548,4 +2259,170 @@ print.cdmc_dr_fit <- function(x, ...) {
   }
 
   invisible(x)
+}
+#' Summarise a cross-fitted DR fit
+#'
+#' Returns a structured summary of [cdmc_dr_fit()] output: the dose-lag
+#' coefficients, fold-level lambda choices, baseline rank usage, weight
+#' diagnostics, and the score (`aipw` / `plr`) plus train baseline weighting
+#' setting. For inferential intervals, pair this with [cdmc_bootstrap()].
+#'
+#' @param object A `cdmc_dr_fit` object.
+#' @param ... Unused.
+#'
+#' @return A `summary.cdmc_dr_fit` object (a list with `coefficients`,
+#'   `folds`, `weight`, `score`, and `dimensions` components) printed via
+#'   the registered `print` method.
+#' @export
+summary.cdmc_dr_fit <- function(object, ...) {
+  coefs <- object$effect$coefficients
+  coefficient_table <- data.frame(
+    term = names(coefs),
+    estimate = unname(as.numeric(coefs)),
+    stringsAsFactors = FALSE
+  )
+
+  fold_summaries <- object$baseline$fold_summaries %||% list()
+  if (length(fold_summaries) > 0L) {
+    folds <- data.frame(
+      fold = vapply(fold_summaries, function(s) s$fold %||% NA_integer_, integer(1)),
+      lambda = vapply(fold_summaries, function(s) s$lambda %||% NA_real_, numeric(1)),
+      lambda_method = vapply(fold_summaries, function(s) s$lambda_method %||% NA_character_, character(1)),
+      applied_max_weight = vapply(
+        fold_summaries,
+        function(s) {
+          v <- s$applied_max_weight %||% NA_real_
+          if (is.null(v) || length(v) == 0L) NA_real_ else as.numeric(v)
+        },
+        numeric(1)
+      ),
+      stringsAsFactors = FALSE
+    )
+  } else {
+    folds <- data.frame(
+      fold = integer(0),
+      lambda = numeric(0),
+      lambda_method = character(0),
+      applied_max_weight = numeric(0),
+      stringsAsFactors = FALSE
+    )
+  }
+
+  diagnostics <- object$weight_diagnostics %||% list()
+  weight <- list(
+    method = object$weight_method,
+    observed_ess = diagnostics$overall$observed$ess %||% NA_real_,
+    observed_n = diagnostics$overall$observed$n_weights %||% NA_integer_,
+    dr_sample_ess = diagnostics$overall$dr_sample$ess %||% NA_real_,
+    dr_sample_n = diagnostics$overall$dr_sample$n_weights %||% NA_integer_
+  )
+
+  out <- list(
+    coefficients = coefficient_table,
+    folds = folds,
+    weight = weight,
+    score = list(
+      dr_score = object$dr_score %||% "aipw",
+      baseline_weighting = object$baseline_weighting %||% "gps"
+    ),
+    dimensions = list(
+      n_units = object$n_units,
+      n_times = object$n_times,
+      n_folds = object$n_folds,
+      lag_order = object$lag_order,
+      n_dr_cells = sum(object$effect$sample_mask, na.rm = TRUE)
+    )
+  )
+  class(out) <- "summary.cdmc_dr_fit"
+  out
+}
+
+#' @export
+print.summary.cdmc_dr_fit <- function(x, ...) {
+  cat("causaldosemc cross-fitted DR summary\n")
+  cat(sprintf(
+    "  units x times: %d x %d   folds: %d   lag order: %d   DR cells: %d\n",
+    x$dimensions$n_units, x$dimensions$n_times, x$dimensions$n_folds,
+    x$dimensions$lag_order, x$dimensions$n_dr_cells
+  ))
+  cat(sprintf(
+    "  score: %s   train baseline weighting: %s   weight method: %s\n",
+    x$score$dr_score, x$score$baseline_weighting, x$weight$method
+  ))
+  if (is.finite(x$weight$dr_sample_ess) && isTRUE(x$weight$dr_sample_n > 0L)) {
+    cat(sprintf(
+      "  DR sample weight ESS: %.6g / %d (%.1f%%)\n",
+      x$weight$dr_sample_ess, x$weight$dr_sample_n,
+      100 * x$weight$dr_sample_ess / x$weight$dr_sample_n
+    ))
+  }
+
+  if (nrow(x$folds) > 0L) {
+    lambda_values <- x$folds$lambda[is.finite(x$folds$lambda)]
+    if (length(lambda_values) > 0L) {
+      cat(sprintf(
+        "  fold lambda: [%.6g, %.6g] (methods: %s)\n",
+        min(lambda_values), max(lambda_values),
+        paste(unique(stats::na.omit(x$folds$lambda_method)), collapse = ", ")
+      ))
+    }
+    caps <- x$folds$applied_max_weight[is.finite(x$folds$applied_max_weight)]
+    if (length(caps) > 0L) {
+      cat(sprintf("  fold applied weight cap: [%.6g, %.6g]\n", min(caps), max(caps)))
+    }
+  }
+
+  if (nrow(x$coefficients) > 0L) {
+    cat("  DR effect coefficients:\n")
+    print(x$coefficients, row.names = FALSE)
+  }
+
+  invisible(x)
+}
+
+#' Side-by-side comparison of two DR scores
+#'
+#' Compares dose-lag coefficients across two [cdmc_dr_fit()] objects fitted
+#' on the same panel with different `dr_score` values (typically `"aipw"`
+#' and `"plr"`). Both fits should otherwise share data, lag order, weight
+#' method, and folds; differing scores let the user assess robustness of
+#' the headline estimates to the orthogonal score choice.
+#'
+#' @param aipw,plr `cdmc_dr_fit` objects to contrast. The names refer to
+#'   the typical use; the function does not enforce a particular `dr_score`
+#'   value, so it can also be used to compare any two compatible fits.
+#'
+#' @return A data frame with one row per dose-lag term containing both
+#'   estimates, their absolute and relative differences, and a flag for
+#'   sign agreement. Sign agreement uses a `0` tolerance equal to
+#'   `sqrt(.Machine$double.eps) * max(|estimates|)`.
+#' @export
+cdmc_dr_score_contrast <- function(aipw, plr) {
+  if (!inherits(aipw, "cdmc_dr_fit") || !inherits(plr, "cdmc_dr_fit")) {
+    stop("Both arguments must be 'cdmc_dr_fit' objects.", call. = FALSE)
+  }
+  if (!identical(aipw$lag_order, plr$lag_order)) {
+    warning("Comparing fits with different lag_order; aligning on shared term names.", call. = FALSE)
+  }
+
+  aipw_coefs <- aipw$effect$coefficients
+  plr_coefs <- plr$effect$coefficients
+  shared <- intersect(names(aipw_coefs), names(plr_coefs))
+  if (length(shared) == 0L) {
+    stop("The two fits share no coefficient names.", call. = FALSE)
+  }
+
+  a <- as.numeric(aipw_coefs[shared])
+  b <- as.numeric(plr_coefs[shared])
+  scale_tol <- sqrt(.Machine$double.eps) * max(abs(c(a, b)), 1)
+  data.frame(
+    term = shared,
+    aipw_estimate = a,
+    plr_estimate = b,
+    abs_diff = b - a,
+    rel_diff = ifelse(abs(a) > scale_tol, (b - a) / a, NA_real_),
+    sign_agree = (a > scale_tol & b > scale_tol) | (a < -scale_tol & b < -scale_tol) |
+      (abs(a) <= scale_tol & abs(b) <= scale_tol),
+    stringsAsFactors = FALSE
+  )
 }

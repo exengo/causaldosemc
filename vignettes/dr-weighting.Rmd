@@ -192,3 +192,66 @@ The practical pattern is:
    target, and
 3. use external weights when the same weighting object should propagate across
    several package layers.
+
+## Choose the orthogonal score and the train baseline weighting
+
+Three orthogonal flags govern the cross-fitted DR machinery. They can be set
+independently and are useful for robustness comparisons.
+
+| Flag | Values | What it changes |
+|---|---|---|
+| `dr_score` | `"aipw"` (default), `"plr"` | The score used to combine the train baseline with the holdout dose history. |
+| `baseline_weighting` | `"gps"` (default), `"none"` | Whether the *train-fold* SVT baseline is fit weighted by GPS / balancing weights or unweighted. |
+| `weight_method` | `"gaussian_gps"`, `"kernel_gps"`, `"cbps"`, `"entropy_balance"`, `"kernel_balance"`, `"adaptive_balance"`, or external | Which weighting scheme produces the per-cell propensity / balancing weights. |
+
+### When to use each `dr_score`
+
+* `"aipw"` (default, augmented IPW) builds the per-cell pseudo-outcome
+  $\tilde\tau_{it} = \hat\tau_{it} + w_{it}\bigl(Y_{it} - \hat Y_{it}^{(0)} - \hat\tau_{it}\bigr)$
+  and regresses it on the dose-lag design. It is the historical default; bias
+  vanishes if either the baseline model or the GPS weights are correct.
+* `"plr"` (Robinson partially linear / Frisch–Waugh) fits a separate
+  conditional-mean model $\hat g(X_{it}) = \mathbb{E}[D_{it}\mid X_{it}, t]$ on
+  each train fold using the same `gps_model` family, residualizes the holdout
+  dose lags as $D_{it} - \hat g(X_{it})$, and regresses outcome residuals on the
+  residualized lags **without** GPS reweighting. Consistency does not require
+  the GPS weights to be normalised correctly, so `"plr"` is a useful second leg
+  for robustness checks.
+
+### When to use each `baseline_weighting`
+
+* `"gps"` (default) reweights the train-fold zero-dose SVT problem by the
+  per-cell weights, which can reduce bias when the support of treated cells
+  shifts in covariate-treatment-relevant directions.
+* `"none"` fits the train-fold baseline unweighted. This is closer to the
+  classical AIPW orthogonality argument because the baseline nuisance is
+  estimated independently of the propensity nuisance, and it is the fastest
+  option. Pair it with a flexible `gps_model` to keep efficiency.
+
+### A robustness contrast in practice
+
+Fit twice with the same data and contrast the dose-lag coefficients:
+
+```{r contrast}
+common <- list(
+  data = panel, outcome = "y", dose = "dose", unit = "unit", time = "time",
+  weight_method = "gaussian_gps", lambda = 0.18, rank_max = 3,
+  washout = 0, lag_order = 1, n_folds = 2, seed = 909
+)
+
+fit_aipw <- do.call(cdmc_dr_fit, c(common, list(dr_score = "aipw")))
+fit_plr  <- do.call(cdmc_dr_fit, c(common, list(dr_score = "plr")))
+
+cdmc_dr_score_contrast(fit_aipw, fit_plr)
+```
+
+The returned data frame reports both estimates per dose-lag term, their
+absolute and relative differences, and a `sign_agree` flag. Substantial
+disagreement, particularly at `dose_lag0`, is a signal that one of the two
+nuisances (baseline vs. GPS conditional mean) is poorly specified.
+
+The `summary()` method gives a structured one-pager per fit:
+
+```{r}
+summary(fit_aipw)
+```

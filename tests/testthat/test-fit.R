@@ -257,6 +257,7 @@ test_that("fit print methods flag heuristic lambda as an empirical fallback", {
     time = "time",
     covariates = "x1",
     lambda = NULL,
+    lambda_selection = "heuristic",
     rank_max = 2,
     washout = 0,
     lag_order = 0,

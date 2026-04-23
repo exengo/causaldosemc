@@ -21,7 +21,7 @@ cdmc_fit(
   lambda = NULL,
   rank_max = NULL,
   lambda_fraction = 0.25,
-  lambda_selection = c("heuristic", "cv"),
+  lambda_selection = c("cv", "heuristic"),
   lambda_grid = NULL,
   nlambda = 5L,
   lambda_min_ratio = 0.05,
